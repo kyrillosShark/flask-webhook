@@ -277,24 +277,51 @@ def create_user(base_address, access_token, instance_id, given_name, surname, em
 
     card_number = generate_card_number()
 
+    # Prepare the current and expiration times
+    active_on = datetime.datetime.utcnow().isoformat()
+    expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat()
+
     user_data = {
+        "$type": "Feenics.Keep.WebApi.Model.PersonInfo, Feenics.Keep.WebApi.Model",
         "CommonName": f"{given_name} {surname}",
-        "Fields": {
-            "GivenName": given_name,
-            "Surname": surname,
-            "EmailAddress": email,
-            "PhoneNumbers": [phone_number]
-        },
+        "GivenName": given_name,
+        "Surname": surname,
+        "Addresses": [
+            {
+                "$type": "Feenics.Keep.WebApi.Model.EmailAddressInfo, Feenics.Keep.WebApi.Model",
+                "MailTo": email,
+                "Type": "Work"
+            },
+            {
+                "$type": "Feenics.Keep.WebApi.Model.PhoneInfo, Feenics.Keep.WebApi.Model",
+                "Number": phone_number,
+                "Type": "Mobile"
+            }
+        ],
         "ObjectLinks": [
             {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
                 "Relation": "BadgeType",
                 "CommonName": badge_type_info.get("CommonName"),
                 "Href": badge_type_info.get("Href"),
-                "LinkedObjectKey": badge_type_info.get("Key")
+                "LinkedObjectKey": badge_type_info.get("Key"),
+                "MetaDataBson": None
+            }
+        ],
+        "CardAssignments": [
+            {
+                "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
+                "EncodedCardNumber": int(card_number),
+                "DisplayCardNumber": str(card_number),
+                "ActiveOn": active_on,
+                "ExpiresOn": expires_on,
+                "AntiPassbackExempt": False,
+                "ExtendedAccess": False
             }
         ],
         "Metadata": [
             {
+                "$type": "Feenics.Keep.WebApi.Model.MetadataItem, Feenics.Keep.WebApi.Model",
                 "Application": "CustomApp",
                 "Values": json.dumps({"CardNumber": format(card_number, 'x')}),
                 "ShouldPublishUpdateEvents": False
