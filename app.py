@@ -102,9 +102,9 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     given_name = db.Column(db.String(50), nullable=False)
     surname = db.Column(db.String(50), nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    phone_number = db.Column(db.String(20), unique=True, nullable=False)
-    card_number = db.Column(db.String(20), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=False, nullable=False)
+    phone_number = db.Column(db.String(20), unique=False, nullable=False)
+    card_number = db.Column(db.String(20), unique=False, nullable=False)
     membership_start = db.Column(db.DateTime, nullable=False)
     membership_end = db.Column(db.DateTime, nullable=False)
 
@@ -114,7 +114,7 @@ class User(db.Model):
 
 class UnlockToken(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    token = db.Column(db.String(36), unique=True, nullable=False)
+    token = db.Column(db.String(36), unique=False, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     expires_at = db.Column(db.DateTime, nullable=False)
