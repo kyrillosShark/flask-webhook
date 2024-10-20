@@ -563,12 +563,27 @@ def create_unlock_link(token):
     """
     unlock_link = f"{UNLOCK_LINK_BASE_URL}?token={token}"
     return unlock_link
+def send_sms(phone_number, unlock_link):
+    """
+    Sends an SMS message with the unlock link to the specified phone number.
+    """
+    message_body = f"Your unlock link: {unlock_link}"
+
+    try:
+        message = client.messages.create(
+            body=message_body,
+            from_=TWILIO_PHONE_NUMBER,
+            to=phone_number
+        )
+        logger.info(f"SMS sent to {phone_number}. SID: {message.sid}")
+    except Exception as e:
+        logger.error(f"Failed to send SMS to {phone_number}: {e}")
 
 def test_send_sms():
     test_phone_number = "+16158031342"  # Replace with your verified number
     test_unlock_link = "https://your-app-url.com/unlock?token=TESTTOKEN1234"
     send_sms(test_phone_number, test_unlock_link)
-
+test_send_sms()
 # ----------------------------
 # User Creation and Messaging Workflow
 # ----------------------------
