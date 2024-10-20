@@ -251,7 +251,7 @@ def generate_card_number():
     card_number = random.randint(0, 67108863)
     return card_number
 
-def create_user(base_address, access_token, instance_id, given_name, surname, email, phone_number, badge_type_info):
+def create_user(base_address, access_token, instance_id, given_name, surname, email, phone_number, badge_type_info, membership_duration_hours):
     """
     Creates a new user in the Keep by Feenics system.
 
@@ -304,21 +304,22 @@ def create_user(base_address, access_token, instance_id, given_name, surname, em
 
         # Create User in local database
         membership_start = datetime.datetime.utcnow()
-        membership_end = membership_start + timedelta(hours=24)  # Example: 24-hour day pass
+        membership_end = membership_start + timedelta(hours=membership_duration_hours)  # Customizable duration
 
-        user = User(
-            id=int(user_id),
-            given_name=given_name,
-            surname=surname,
-            email=email,
-            phone_number=phone_number,
-            card_number=str(card_number),
-            membership_start=membership_start,
-            membership_end=membership_end
-        )
+        with app.app_context():
+            user = User(
+                id=int(user_id),
+                given_name=given_name,
+                surname=surname,
+                email=email,
+                phone_number=phone_number,
+                card_number=str(card_number),
+                membership_start=membership_start,
+                membership_end=membership_end
+            )
 
-        db.session.add(user)
-        db.session.commit()
+            db.session.add(user)
+            db.session.commit()
 
         return user
     except Exception as err:
@@ -524,23 +525,26 @@ def process_user_creation(given_name, surname, email, phone_number, membership_d
                 # If Badge Type already exists (status code 409), retrieve its details
                 badge_type_info = get_badge_type_details(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
 
-        # Step 3: Create User
-        existing_user = User.query.filter_by(email=email).first()
-        if existing_user:
-            logger.info(f"User with email {email} already exists.")
-            return
+        # Step 3: Check if user exists in the database
+        with app.app_context():
+            existing_user = User.query.filter_by(email=email).first()
 
-        # Create the user via CRM API
-        user = create_user(
-            base_address=BASE_ADDRESS,
-            access_token=access_token,
-            instance_id=instance_id,
-            given_name=given_name,
-            surname=surname,
-            email=email,
-            phone_number=phone_number,
-            badge_type_info=badge_type_info
-        )
+            if existing_user:
+                logger.info(f"User with email {email} already exists.")
+                return
+
+            # Create the user via CRM API and store in local database
+            user = create_user(
+                base_address=BASE_ADDRESS,
+                access_token=access_token,
+                instance_id=instance_id,
+                given_name=given_name,
+                surname=surname,
+                email=email,
+                phone_number=phone_number,
+                badge_type_info=badge_type_info,
+                membership_duration_hours=membership_duration_hours
+            )
 
         # Step 4: Generate Unlock Token and Link
         unlock_token_str = generate_unlock_token(user)
@@ -559,14 +563,15 @@ def generate_unlock_token(user):
     token = str(uuid.uuid4())
     expires_at = user.membership_end  # Token expires when membership ends
 
-    unlock_token = UnlockToken(
-        token=token,
-        user_id=user.id,
-        expires_at=expires_at
-    )
+    with app.app_context():
+        unlock_token = UnlockToken(
+            token=token,
+            user_id=user.id,
+            expires_at=expires_at
+        )
 
-    db.session.add(unlock_token)
-    db.session.commit()
+        db.session.add(unlock_token)
+        db.session.commit()
 
     logger.info(f"Generated unlock token for user ID {user.id}")
     return token
@@ -608,21 +613,22 @@ def validate_unlock_token(token):
     """
     Validates the unlock token.
     """
-    unlock_token = UnlockToken.query.filter_by(token=token).first()
+    with app.app_context():
+        unlock_token = UnlockToken.query.filter_by(token=token).first()
 
-    if not unlock_token:
-        return False, "Invalid token."
+        if not unlock_token:
+            return False, "Invalid token."
 
-    if unlock_token.used:
-        return False, "Token has already been used."
+        if unlock_token.used:
+            return False, "Token has already been used."
 
-    if datetime.datetime.utcnow() >= unlock_token.expires_at:
-        return False, "Token has expired."
+        if datetime.datetime.utcnow() >= unlock_token.expires_at:
+            return False, "Token has expired."
 
-    if not unlock_token.user.is_membership_active():
-        return False, "Membership is no longer active."
+        if not unlock_token.user.is_membership_active():
+            return False, "Membership is no longer active."
 
-    return True, unlock_token
+        return True, unlock_token
 
 # ----------------------------
 # Flask Routes
@@ -684,8 +690,9 @@ def handle_unlock():
     unlock_token = result
 
     # Mark the token as used
-    unlock_token.used = True
-    db.session.commit()
+    with app.app_context():
+        unlock_token.used = True
+        db.session.commit()
 
     card_number = unlock_token.user.card_number
 
