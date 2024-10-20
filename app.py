@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 import os
@@ -103,8 +103,8 @@ SESSION = create_session()
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    given_name = db.Column(db.String(50), nullable=False)
-    surname = db.Column(db.String(50), nullable=False)
+    first_name = db.Column(db.String(50), nullable=False)
+    last_name = db.Column(db.String(50), nullable=False)
     email = db.Column(db.String(120), unique=False, nullable=False)
     phone_number = db.Column(db.String(20), unique=False, nullable=False)
     card_number = db.Column(db.String(20), unique=False, nullable=False)
@@ -269,7 +269,7 @@ def generate_card_number():
     card_number = random.randint(0, 67108863)
     return card_number
 
-def create_user(base_address, access_token, instance_id, given_name, surname, email, phone_number, badge_type_info, membership_duration_hours):
+def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours):
     """
     Creates a new user in the Keep by Feenics system.
 
@@ -286,9 +286,9 @@ def create_user(base_address, access_token, instance_id, given_name, surname, em
 
     user_data = {
         "$type": "Feenics.Keep.WebApi.Model.PersonInfo, Feenics.Keep.WebApi.Model",
-        "CommonName": f"{given_name} {surname}",
-        "GivenName": given_name,
-        "Surname": surname,
+        "CommonName": f"{first_name} {last_name}",
+        "GivenName": first_name,
+        "Surname": last_name,
         "Addresses": [
             {
                 "$type": "Feenics.Keep.WebApi.Model.EmailAddressInfo, Feenics.Keep.WebApi.Model",
@@ -347,7 +347,7 @@ def create_user(base_address, access_token, instance_id, given_name, surname, em
         if not user_id:
             raise Exception("User ID not found in the response.")
 
-        logger.info(f"User '{given_name} {surname}' created successfully with ID: {user_id}")
+        logger.info(f"User '{first_name} {last_name}' created successfully with ID: {user_id}")
         logger.info(f"Assigned Card Number: {card_number} (Hex: {format(card_number, 'x')})")
 
         # Create User in local database
@@ -356,8 +356,8 @@ def create_user(base_address, access_token, instance_id, given_name, surname, em
 
         with app.app_context():
             user = User(
-                given_name=given_name,
-                surname=surname,
+                first_name=first_name,
+                last_name=last_name,
                 email=email,
                 phone_number=phone_number,
                 card_number=str(card_number),
@@ -521,27 +521,6 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         logger.error(f"Error during event publishing: {err}")
         return False
 
-def parse_full_name(full_name):
-    """
-    Splits the full name into given name and surname.
-    Assumes the last word is the surname and the rest is the given name.
-
-    Args:
-        full_name (str): The full name of the user.
-
-    Returns:
-        tuple: (given_name, surname)
-
-    Raises:
-        ValueError: If the full name cannot be split properly.
-    """
-    parts = full_name.strip().split()
-    if len(parts) < 2:
-        raise ValueError("Full name must contain at least a given name and a surname.")
-    given_name = ' '.join(parts[:-1])
-    surname = parts[-1]
-    return given_name, surname
-
 def generate_unlock_token(user):
     """
     Generates a unique unlock token for the user and saves it to the database.
@@ -566,6 +545,7 @@ def create_unlock_link(token):
     """
     unlock_link = f"{UNLOCK_LINK_BASE_URL}?token={token}"
     return unlock_link
+
 def send_sms(phone_number, unlock_link):
     """
     Sends an SMS message with the unlock link to the specified phone number.
@@ -576,18 +556,17 @@ def send_sms(phone_number, unlock_link):
         message = client.messages.create(
             body=message_body,
             from_=TWILIO_PHONE_NUMBER,
-            to='+18777804236'
+            to=phone_number
         )
         logger.info(f"SMS sent to {phone_number}. SID: {message.sid}")
     except Exception as e:
         logger.error(f"Failed to send SMS to {phone_number}: {e}")
 
-
 # ----------------------------
 # User Creation and Messaging Workflow
 # ----------------------------
 
-def process_user_creation(given_name, surname, email, phone_number, membership_duration_hours=24):
+def process_user_creation(first_name, last_name, email, phone_number, membership_duration_hours=24):
     """
     Complete workflow to create a user in CRM, store membership info, generate unlock link, and send an SMS.
     """
@@ -626,8 +605,8 @@ def process_user_creation(given_name, surname, email, phone_number, membership_d
                 base_address=BASE_ADDRESS,
                 access_token=access_token,
                 instance_id=instance_id,
-                given_name=given_name,
-                surname=surname,
+                first_name=first_name,
+                last_name=last_name,
                 email=email,
                 phone_number=phone_number,
                 badge_type_info=badge_type_info,
@@ -672,6 +651,7 @@ def validate_unlock_token(token):
 # ----------------------------
 # Flask Routes
 # ----------------------------
+
 @app.route('/reset_database', methods=['POST'])
 def reset_database():
     if not app.config['DEBUG']:
@@ -684,42 +664,28 @@ def reset_database():
     except Exception as e:
         logger.exception(f"Error resetting database: {e}")
         return jsonify({'error': 'Failed to reset database'}), 500
+
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
     data = request.json
     logger.info(f"Received webhook data: {data}")
 
-    # Initialize variables
-    given_name = data.get('given_name')
-    surname = data.get('surname')
-
-    # If given_name or surname is missing, try to parse full_name
-    if not given_name or not surname:
-        full_name = data.get('full_name')
-        if full_name:
-            try:
-                given_name, surname = parse_full_name(full_name)
-                logger.info(f"Parsed full_name into given_name: {given_name}, surname: {surname}")
-            except ValueError as ve:
-                logger.warning(f"Failed to parse full_name: {ve}")
-                return jsonify({'error': 'Invalid full_name format.'}), 400
-        else:
-            logger.warning("Missing required fields: given_name and surname.")
-            return jsonify({'error': 'Missing required fields.'}), 400
-
+    # Extract fields from the data
+    first_name = data.get('first_name')
+    last_name = data.get('last_name')
     email = data.get('email')
-    phone_number = data.get('phone_number')
-    membership_duration_hours = data.get('membership_duration_hours', 24)  # Default to 24 hours
+    phone_number = data.get('phone')
 
-    if not all([given_name, surname, email, phone_number]):
-        logger.warning("Missing required fields after processing.")
-        return jsonify({'error': 'Missing required fields after processing.'}), 400
+    # Check for required fields
+    if not all([first_name, last_name, email, phone_number]):
+        logger.warning("Missing required fields.")
+        return jsonify({'error': 'Missing required fields.'}), 400
 
-    logger.info(f"Processing user: {given_name} {surname}, Email: {email}, Phone: {phone_number}")
+    logger.info(f"Processing user: {first_name} {last_name}, Email: {email}, Phone: {phone_number}")
 
     # Process user creation in a separate thread to avoid blocking
     threading.Thread(target=process_user_creation, args=(
-        given_name, surname, email, phone_number, membership_duration_hours)).start()
+        first_name, last_name, email, phone_number)).start()
 
     return jsonify({'status': 'User creation in progress'}), 200
 
@@ -803,6 +769,7 @@ def simulate_unlock(card_number):
 
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
+
 @app.route('/test_send_unlock_sms', methods=['GET'])
 def test_send_unlock_sms():
     """
@@ -831,10 +798,10 @@ def test_send_unlock_sms():
                 badge_type_info = get_badge_type_details(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
 
         # Step 3: Create a Test User
-        given_name = "Test"
-        surname = "User"
+        first_name = "Test"
+        last_name = "User"
         email = f"test.user{random.randint(1000,9999)}@example.com"
-        phone_number = "+18777804236"  # Sending SMS to Twilio number for testing; change as needed
+        phone_number = "+1234567890"  # Use a valid test number
         membership_duration_hours = 24  # 24-hour membership for testing
 
         # Create the user via CRM API and store in local database
@@ -842,8 +809,8 @@ def test_send_unlock_sms():
             base_address=BASE_ADDRESS,
             access_token=access_token,
             instance_id=instance_id,
-            given_name=given_name,
-            surname=surname,
+            first_name=first_name,
+            last_name=last_name,
             email=email,
             phone_number=phone_number,
             badge_type_info=badge_type_info,
