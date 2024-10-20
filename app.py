@@ -309,7 +309,6 @@ def create_user(base_address, access_token, instance_id, given_name, surname, em
 
         with app.app_context():
             user = User(
-                id=int(user_id),
                 given_name=given_name,
                 surname=surname,
                 email=email,
