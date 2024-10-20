@@ -39,6 +39,7 @@ TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 UNLOCK_LINK_BASE_URL = os.getenv("UNLOCK_LINK_BASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Check for required environment variables
 required_env_vars = [
