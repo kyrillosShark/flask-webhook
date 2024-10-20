@@ -579,6 +579,7 @@ def send_sms(phone_number, unlock_link):
     except Exception as e:
         logger.error(f"Failed to send SMS to {phone_number}: {e}")
 
+
 def test_send_sms():
     test_phone_number = "+18777804236"  # Replace with your verified number
     test_unlock_link = "https://your-app-url.com/unlock?token=TESTTOKEN1234"
@@ -793,6 +794,70 @@ def simulate_unlock(card_number):
 
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
+@app.route('/test_send_unlock_sms', methods=['GET'])
+def test_send_unlock_sms():
+    """
+    Test route to create a test user and send an unlock link via SMS.
+    """
+    try:
+        # Step 1: Authenticate
+        access_token, instance_id = get_access_token(
+            base_address=BASE_ADDRESS,
+            instance_name=INSTANCE_NAME,
+            username=KEEP_USERNAME,
+            password=KEEP_PASSWORD
+        )
+
+        # Step 2: Get or Create Badge Type
+        badge_types = get_badge_types(BASE_ADDRESS, access_token, instance_id)
+        badge_type_info = next((bt for bt in badge_types if bt.get("CommonName") == BADGE_TYPE_NAME), None)
+
+        if not badge_type_info:
+            logger.info(f"Badge Type '{BADGE_TYPE_NAME}' does not exist. Creating it now.")
+            badge_type_response = create_badge_type(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
+            if badge_type_response:
+                badge_type_info = badge_type_response
+            else:
+                # If Badge Type already exists (status code 409), retrieve its details
+                badge_type_info = get_badge_type_details(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
+
+        # Step 3: Create a Test User
+        given_name = "Test"
+        surname = "User"
+        email = f"test.user{random.randint(1000,9999)}@example.com"
+        phone_number = TWILIO_PHONE_NUMBER  # Sending SMS to Twilio number for testing; change as needed
+        membership_duration_hours = 24  # 24-hour membership for testing
+
+        # Create the user via CRM API and store in local database
+        user = create_user(
+            base_address=BASE_ADDRESS,
+            access_token=access_token,
+            instance_id=instance_id,
+            given_name=given_name,
+            surname=surname,
+            email=email,
+            phone_number=phone_number,
+            badge_type_info=badge_type_info,
+            membership_duration_hours=membership_duration_hours
+        )
+
+        # Step 4: Generate Unlock Token and Link
+        unlock_token_str = generate_unlock_token(user)
+        unlock_link = create_unlock_link(unlock_token_str)
+
+        # Step 5: Send SMS with Unlock Link
+        send_sms(phone_number, unlock_link)
+
+        return jsonify({
+            'status': 'Test unlock link SMS sent successfully',
+            'email': email,
+            'phone_number': phone_number,
+            'unlock_link': unlock_link
+        }), 200
+
+    except Exception as e:
+        logger.exception(f"Error in test_send_unlock_sms: {e}")
+        return jsonify({'error': 'Failed to send test unlock SMS'}), 500
 
 # ----------------------------
 # Main Execution
