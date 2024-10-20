@@ -825,7 +825,7 @@ def test_send_unlock_sms():
         given_name = "Test"
         surname = "User"
         email = f"test.user{random.randint(1000,9999)}@example.com"
-        phone_number = TWILIO_PHONE_NUMBER  # Sending SMS to Twilio number for testing; change as needed
+        phone_number = "+18777804236"  # Sending SMS to Twilio number for testing; change as needed
         membership_duration_hours = 24  # 24-hour membership for testing
 
         # Create the user via CRM API and store in local database
