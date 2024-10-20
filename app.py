@@ -704,6 +704,23 @@ def simulate_unlock(card_number):
 
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
+def generate_unlock_token(user):
+    """
+    Generates a unique unlock token for the user and saves it to the database.
+    """
+    token_str = str(uuid.uuid4())
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)  # Token valid for 15 minutes
+
+    with app.app_context():
+        unlock_token = UnlockToken(
+            token=token_str,
+            user_id=user.id,
+            expires_at=expires_at
+        )
+        db.session.add(unlock_token)
+        db.session.commit()
+
+    return token_str
 
 # ----------------------------
 # Main Execution
