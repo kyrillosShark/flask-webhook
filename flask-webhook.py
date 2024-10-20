@@ -4,44 +4,52 @@ import threading
 import uuid
 import datetime
 from datetime import timezone, timedelta
-from twilio.rest import Client  # Imported Twilio Client
+from twilio.rest import Client
 import requests
 import json
 import sys
 import base64
 import random
+import logging
 from bson import BSON  # From pymongo
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from flask_sqlalchemy import SQLAlchemy
 
+# ----------------------------
+# Configuration and Setup
+# ----------------------------
+
 app = Flask(__name__)
 
-# ----------------------------
-# Configuration and Constants
-# ----------------------------
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+logger = logging.getLogger(__name__)
 
-# Base API URL
-BASE_ADDRESS = "https://api.us.acresecurity.cloud"
+# Environment Variables
+BASE_ADDRESS = os.getenv("BASE_ADDRESS")
+INSTANCE_NAME = os.getenv("INSTANCE_NAME")
+USERNAME = os.getenv("KEEP_USERNAME")
+PASSWORD = os.getenv("KEEP_PASSWORD")
+BADGE_TYPE_NAME = os.getenv("BADGE_TYPE_NAME", "Employee Badge")
+SIMULATION_REASON = os.getenv("SIMULATION_REASON", "Automated Testing of Card Read")
+FACILITY_CODE = int(os.getenv("FACILITY_CODE", 100))
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
+UNLOCK_LINK_BASE_URL = os.getenv("UNLOCK_LINK_BASE_URL")
 
-# Instance Name
-INSTANCE_NAME = "ironhorse"  # Replace with your actual instance name
+# Check for required environment variables
+required_env_vars = [
+    'BASE_ADDRESS', 'INSTANCE_NAME', 'USERNAME', 'PASSWORD',
+    'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER',
+    'UNLOCK_LINK_BASE_URL'
+]
 
-# Administrator Credentials (Set as environment variables)
-USERNAME = os.getenv("KEEP_USERNAME", "admin")  # Default to 'admin' if not set
-PASSWORD = os.getenv("KEEP_PASSWORD", "P@ssw0rd!")  # Default password
-
-# Badge Type Configuration
-BADGE_TYPE_NAME = "Employee Badge"
-
-# Simulation Parameters
-SIMULATION_REASON = "Automated Testing of Card Read"
-FACILITY_CODE = 100
-
-# Twilio Configuration (Hardcoded Credentials - Not Recommended)
-TWILIO_ACCOUNT_SID = 'AC1cfbf4a9ce830facd168f12224731fa3'
-TWILIO_AUTH_TOKEN = '173cc74da139e5cfbc0123515e4d72d0'
-TWILIO_PHONE_NUMBER = '+18447936399'  # Your Twilio phone number
+missing_env_vars = [var for var in required_env_vars if not globals().get(var)]
+if missing_env_vars:
+    logger.error(f"Missing environment variables: {', '.join(missing_env_vars)}")
+    sys.exit(1)
 
 # Database Configuration (SQLite Example)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///unlock_tokens.db'
@@ -66,6 +74,10 @@ def create_session():
     return session
 
 SESSION = create_session()
+
+# Initialize the database
+with app.app_context():
+    db.create_all()
 
 # ----------------------------
 # Database Models
@@ -99,12 +111,8 @@ class UnlockToken(db.Model):
         now = datetime.datetime.utcnow()
         return not self.used and now < self.expires_at and self.user.is_membership_active()
 
-# Initialize the database
-with app.app_context():
-    db.create_all()
-
 # ----------------------------
-# Helper Functions (Your Existing Code)
+# Helper Functions
 # ----------------------------
 
 def get_access_token(base_address, instance_name, username, password):
@@ -144,15 +152,15 @@ def get_access_token(base_address, instance_name, username, password):
         if not access_token or not instance_id:
             raise Exception("Access token or instance ID not found in the response.")
 
-        print("Login Successful!\n")
+        logger.info("CRM login successful.")
         return access_token, instance_id
     except requests.exceptions.HTTPError as http_err:
-        print(f"HTTP error occurred during login: {http_err}")
-        print(f"Response Content: {response.text}")
-        sys.exit(1)
+        logger.error(f"HTTP error during CRM login: {http_err}")
+        logger.error(f"Response Content: {response.text}")
+        raise
     except Exception as err:
-        print(f"An error occurred during login: {err}")
-        sys.exit(1)
+        logger.error(f"Error during CRM login: {err}")
+        raise
 
 def get_badge_types(base_address, access_token, instance_id):
     """
@@ -171,13 +179,9 @@ def get_badge_types(base_address, access_token, instance_id):
 
         badge_types = response.json()
         return badge_types
-    except requests.exceptions.HTTPError as http_err:
-        print(f"HTTP error occurred while retrieving badge types: {http_err}")
-        print(f"Response Content: {response.text}")
-        sys.exit(1)
     except Exception as err:
-        print(f"An error occurred while retrieving badge types: {err}")
-        sys.exit(1)
+        logger.error(f"Error retrieving badge types: {err}")
+        raise
 
 def create_badge_type(base_address, access_token, instance_id, badge_type_name):
     """
@@ -203,24 +207,24 @@ def create_badge_type(base_address, access_token, instance_id, badge_type_name):
         response.raise_for_status()
 
         response_data = response.json()
-        badge_type_id = response_data.get("Key")  # Assuming "Key" is the unique identifier
+        badge_type_id = response_data.get("Key")
 
         if not badge_type_id:
             raise Exception("Badge Type ID not found in the response.")
 
-        print(f"Badge Type '{badge_type_name}' created successfully with ID: {badge_type_id}\n")
+        logger.info(f"Badge Type '{badge_type_name}' created successfully with ID: {badge_type_id}")
         return response_data
     except requests.exceptions.HTTPError as http_err:
         if response.status_code == 409:
-            print(f"Badge Type '{badge_type_name}' already exists.\n")
+            logger.info(f"Badge Type '{badge_type_name}' already exists.")
             return None
         else:
-            print(f"HTTP error occurred during Badge Type creation: {http_err}")
-            print(f"Response Content: {response.text}")
-            sys.exit(1)
+            logger.error(f"HTTP error during Badge Type creation: {http_err}")
+            logger.error(f"Response Content: {response.text}")
+            raise
     except Exception as err:
-        print(f"An error occurred during Badge Type creation: {err}")
-        sys.exit(1)
+        logger.error(f"Error during Badge Type creation: {err}")
+        raise
 
 def get_badge_type_details(base_address, access_token, instance_id, badge_type_name):
     """
@@ -228,9 +232,6 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
 
     Returns:
         dict: Details of the Badge Type.
-
-    Raises:
-        Exception: If retrieval fails or Badge Type is not found.
     """
     badge_types = get_badge_types(base_address, access_token, instance_id)
 
@@ -247,7 +248,6 @@ def generate_card_number():
     Returns:
         int: A 26-bit card number.
     """
-    # 26-bit range: 0 to 67,108,863
     card_number = random.randint(0, 67108863)
     return card_number
 
@@ -260,10 +260,8 @@ def create_user(base_address, access_token, instance_id, given_name, surname, em
     """
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
-    # Generate a 26-bit HID card number
     card_number = generate_card_number()
 
-    # Prepare the payload
     user_data = {
         "GivenName": given_name,
         "Surname": surname,
@@ -280,7 +278,7 @@ def create_user(base_address, access_token, instance_id, given_name, surname, em
         "Metadata": [
             {
                 "Application": "CustomApp",
-                "Values": json.dumps({"CardNumber": format(card_number, 'x')}),  # Hexadecimal
+                "Values": json.dumps({"CardNumber": format(card_number, 'x')}),
                 "ShouldPublishUpdateEvents": False
             }
         ]
@@ -290,11 +288,6 @@ def create_user(base_address, access_token, instance_id, given_name, surname, em
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
-
-    # Debug: Print the payload
-    print("User Data Payload:")
-    print(json.dumps(user_data, indent=4))
-    print()
 
     try:
         response = SESSION.post(create_person_endpoint, headers=headers, json=user_data)
@@ -306,8 +299,8 @@ def create_user(base_address, access_token, instance_id, given_name, surname, em
         if not user_id:
             raise Exception("User ID not found in the response.")
 
-        print(f"User '{given_name} {surname}' created successfully with ID: {user_id}")
-        print(f"Assigned Card Number: {card_number} (Hex: {format(card_number, 'x')})\n")
+        logger.info(f"User '{given_name} {surname}' created successfully with ID: {user_id}")
+        logger.info(f"Assigned Card Number: {card_number} (Hex: {format(card_number, 'x')})")
 
         # Create User in local database
         membership_start = datetime.datetime.utcnow()
@@ -328,13 +321,9 @@ def create_user(base_address, access_token, instance_id, given_name, surname, em
         db.session.commit()
 
         return user
-    except requests.exceptions.HTTPError as http_err:
-        print(f"HTTP error occurred during user creation: {http_err}")
-        print(f"Response Content: {response.text}")
-        sys.exit(1)
     except Exception as err:
-        print(f"An error occurred during user creation: {err}")
-        sys.exit(1)
+        logger.error(f"Error during user creation: {err}")
+        raise
 
 def get_readers(base_address, access_token, instance_id):
     """
@@ -354,15 +343,11 @@ def get_readers(base_address, access_token, instance_id):
         response = SESSION.get(readers_endpoint, headers=headers)
         response.raise_for_status()
         readers = response.json()
-        print(f"Available Readers:\n{json.dumps(readers, indent=4)}\n")
+        logger.info(f"Retrieved {len(readers)} readers.")
         return readers
-    except requests.exceptions.HTTPError as http_err:
-        print(f"HTTP error occurred while retrieving readers: {http_err}")
-        print(f"Response Content: {response.text}")
-        sys.exit(1)
     except Exception as err:
-        print(f"An error occurred while retrieving readers: {err}")
-        sys.exit(1)
+        logger.error(f"Error retrieving readers: {err}")
+        raise
 
 def get_card_formats(base_address, access_token, instance_id):
     """
@@ -382,15 +367,11 @@ def get_card_formats(base_address, access_token, instance_id):
         response = SESSION.get(card_formats_endpoint, headers=headers)
         response.raise_for_status()
         card_formats = response.json()
-        print(f"Available Card Formats:\n{json.dumps(card_formats, indent=4)}\n")
+        logger.info(f"Retrieved {len(card_formats)} card formats.")
         return card_formats
-    except requests.exceptions.HTTPError as http_err:
-        print(f"HTTP error occurred while retrieving card formats: {http_err}")
-        print(f"Response Content: {response.text}")
-        sys.exit(1)
     except Exception as err:
-        print(f"An error occurred while retrieving card formats: {err}")
-        sys.exit(1)
+        logger.error(f"Error retrieving card formats: {err}")
+        raise
 
 def get_controllers(base_address, access_token, instance_id):
     """
@@ -410,15 +391,11 @@ def get_controllers(base_address, access_token, instance_id):
         response = SESSION.get(controllers_endpoint, headers=headers)
         response.raise_for_status()
         controllers = response.json()
-        print(f"Available Controllers:\n{json.dumps(controllers, indent=4)}\n")
+        logger.info(f"Retrieved {len(controllers)} controllers.")
         return controllers
-    except requests.exceptions.HTTPError as http_err:
-        print(f"HTTP error occurred while retrieving controllers: {http_err}")
-        print(f"Response Content: {response.text}")
-        sys.exit(1)
     except Exception as err:
-        print(f"An error occurred while retrieving controllers: {err}")
-        sys.exit(1)
+        logger.error(f"Error retrieving controllers: {err}")
+        raise
 
 def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number):
     """
@@ -438,11 +415,6 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         "FacilityCode": str(facility_code),
         "EncodedCardNumber": encoded_card_number_hex
     }
-
-    # Debug: Print the event data
-    print("Event Data:")
-    print(json.dumps(event_data, indent=4))
-    print()
 
     # Convert EventData to BSON and then to Base64
     event_data_bson = BSON.encode(event_data)
@@ -487,11 +459,6 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         "EventDataBsonBase64": event_data_base64
     }
 
-    # Debug: Print the payload
-    print("Payload:")
-    print(json.dumps(payload, indent=4))
-    print()
-
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
@@ -500,15 +467,32 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     try:
         response = SESSION.post(event_endpoint, headers=headers, json=payload)
         response.raise_for_status()
-        print("Card read simulation event published successfully.\n")
+        logger.info("Card read simulation event published successfully.")
         return True
-    except requests.exceptions.HTTPError as http_err:
-        print(f"HTTP error occurred during event publishing: {http_err}")
-        print(f"Response Content: {response.text}")
-        return False
     except Exception as err:
-        print(f"An error occurred during event publishing: {err}")
+        logger.error(f"Error during event publishing: {err}")
         return False
+
+def parse_full_name(full_name):
+    """
+    Splits the full name into given name and surname.
+    Assumes the last word is the surname and the rest is the given name.
+
+    Args:
+        full_name (str): The full name of the user.
+
+    Returns:
+        tuple: (given_name, surname)
+
+    Raises:
+        ValueError: If the full name cannot be split properly.
+    """
+    parts = full_name.strip().split()
+    if len(parts) < 2:
+        raise ValueError("Full name must contain at least a given name and a surname.")
+    given_name = ' '.join(parts[:-1])
+    surname = parts[-1]
+    return given_name, surname
 
 # ----------------------------
 # User Creation and Messaging Workflow
@@ -532,7 +516,7 @@ def process_user_creation(given_name, surname, email, phone_number, membership_d
         badge_type_info = next((bt for bt in badge_types if bt.get("CommonName") == BADGE_TYPE_NAME), None)
 
         if not badge_type_info:
-            print(f"Badge Type '{BADGE_TYPE_NAME}' does not exist. Creating it now...\n")
+            logger.info(f"Badge Type '{BADGE_TYPE_NAME}' does not exist. Creating it now.")
             badge_type_response = create_badge_type(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
             if badge_type_response:
                 badge_type_info = badge_type_response
@@ -541,10 +525,9 @@ def process_user_creation(given_name, surname, email, phone_number, membership_d
                 badge_type_info = get_badge_type_details(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
 
         # Step 3: Create User
-        # Generate a unique phone number or handle duplicates as needed
         existing_user = User.query.filter_by(email=email).first()
         if existing_user:
-            print(f"User with email {email} already exists.")
+            logger.info(f"User with email {email} already exists.")
             return
 
         # Create the user via CRM API
@@ -559,7 +542,7 @@ def process_user_creation(given_name, surname, email, phone_number, membership_d
             badge_type_info=badge_type_info
         )
 
-        # Step 4: Generate Unlock Link
+        # Step 4: Generate Unlock Token and Link
         unlock_token_str = generate_unlock_token(user)
         unlock_link = create_unlock_link(unlock_token_str)
 
@@ -567,7 +550,7 @@ def process_user_creation(given_name, surname, email, phone_number, membership_d
         send_sms(phone_number, unlock_link)
 
     except Exception as e:
-        print(f"Error in processing user creation: {e}")
+        logger.exception(f"Error in processing user creation: {e}")
 
 def generate_unlock_token(user):
     """
@@ -585,21 +568,24 @@ def generate_unlock_token(user):
     db.session.add(unlock_token)
     db.session.commit()
 
+    logger.info(f"Generated unlock token for user ID {user.id}")
     return token
 
 def create_unlock_link(token):
     """
     Creates a secure unlock link containing the token.
     """
-    base_url = "https://yourdomain.com/unlock"  # Replace with your actual domain
-    return f"{base_url}?token={token}"
+    if not UNLOCK_LINK_BASE_URL:
+        logger.error("UNLOCK_LINK_BASE_URL is not set.")
+        raise Exception("Unlock link base URL is not set. Please configure UNLOCK_LINK_BASE_URL.")
+    return f"{UNLOCK_LINK_BASE_URL}?token={token}"
 
 def send_sms(to_phone_number, unlock_link):
     """
     Sends an SMS with the unlock link to the user's phone number.
     """
     if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER]):
-        print("Twilio credentials are not set properly.")
+        logger.error("Twilio credentials are not set properly.")
         return
 
     message_body = f"Welcome! Click the link to unlock your door: {unlock_link}\nNote: This link is valid for the duration of your membership."
@@ -610,9 +596,9 @@ def send_sms(to_phone_number, unlock_link):
             from_=TWILIO_PHONE_NUMBER,
             to=to_phone_number
         )
-        print(f"SMS sent to {to_phone_number}: SID {message.sid}")
+        logger.info(f"SMS sent to {to_phone_number}: SID {message.sid}")
     except Exception as e:
-        print(f"Failed to send SMS: {e}")
+        logger.error(f"Failed to send SMS to {to_phone_number}: {e}")
 
 # ----------------------------
 # Unlock Token Management
@@ -639,19 +625,60 @@ def validate_unlock_token(token):
     return True, unlock_token
 
 # ----------------------------
-# Unlock Endpoint
+# Flask Routes
 # ----------------------------
+
+@app.route('/webhook', methods=['POST'])
+def handle_webhook():
+    data = request.json
+    logger.info(f"Received webhook data: {data}")
+
+    # Initialize variables
+    given_name = data.get('given_name')
+    surname = data.get('surname')
+
+    # If given_name or surname is missing, try to parse full_name
+    if not given_name or not surname:
+        full_name = data.get('full_name')
+        if full_name:
+            try:
+                given_name, surname = parse_full_name(full_name)
+                logger.info(f"Parsed full_name into given_name: {given_name}, surname: {surname}")
+            except ValueError as ve:
+                logger.warning(f"Failed to parse full_name: {ve}")
+                return jsonify({'error': 'Invalid full_name format.'}), 400
+        else:
+            logger.warning("Missing required fields: given_name and surname.")
+            return jsonify({'error': 'Missing required fields.'}), 400
+
+    email = data.get('email')
+    phone_number = data.get('phone_number')
+    membership_duration_hours = data.get('membership_duration_hours', 24)  # Default to 24 hours
+
+    if not all([given_name, surname, email, phone_number]):
+        logger.warning("Missing required fields after processing.")
+        return jsonify({'error': 'Missing required fields after processing.'}), 400
+
+    logger.info(f"Processing user: {given_name} {surname}, Email: {email}, Phone: {phone_number}")
+
+    # Process user creation in a separate thread to avoid blocking
+    threading.Thread(target=process_user_creation, args=(
+        given_name, surname, email, phone_number, membership_duration_hours)).start()
+
+    return jsonify({'status': 'User creation in progress'}), 200
 
 @app.route('/unlock', methods=['GET'])
 def handle_unlock():
     token = request.args.get('token')
 
     if not token:
+        logger.warning("Unlock attempt without token.")
         return jsonify({'error': 'Token is missing'}), 400
 
     is_valid, result = validate_unlock_token(token)
 
     if not is_valid:
+        logger.warning(f"Invalid unlock token: {result}")
         return jsonify({'error': result}), 400
 
     unlock_token = result
@@ -683,24 +710,24 @@ def simulate_unlock(card_number):
         # Retrieve required components
         readers = get_readers(BASE_ADDRESS, access_token, instance_id)
         if not readers:
-            print("No Readers found.")
+            logger.error("No Readers found.")
             return
         reader = readers[0]  # Select the first reader
 
         card_formats = get_card_formats(BASE_ADDRESS, access_token, instance_id)
         if not card_formats:
-            print("No Card Formats found.")
+            logger.error("No Card Formats found.")
             return
         card_format = card_formats[0]  # Select the first card format
 
         controllers = get_controllers(BASE_ADDRESS, access_token, instance_id)
         if not controllers:
-            print("No Controllers found.")
+            logger.error("No Controllers found.")
             return
         controller = controllers[0]  # Select the first controller
 
         # Simulate Card Read
-        simulate_card_read(
+        success = simulate_card_read(
             base_address=BASE_ADDRESS,
             access_token=access_token,
             instance_id=instance_id,
@@ -712,32 +739,13 @@ def simulate_unlock(card_number):
             card_number=card_number
         )
 
+        if success:
+            logger.info("Unlock simulation successful.")
+        else:
+            logger.error("Unlock simulation failed.")
+
     except Exception as e:
-        print(f"Error in simulating unlock: {e}")
-
-# ----------------------------
-# Webhook Endpoint
-# ----------------------------
-
-@app.route('/webhook', methods=['POST'])
-def handle_webhook():
-    data = request.json
-
-    # Validate incoming data
-    required_fields = ['given_name', 'surname', 'email', 'phone_number']
-    if not all(field in data for field in required_fields):
-        return jsonify({'error': 'Missing required fields'}), 400
-
-    given_name = data['given_name']
-    surname = data['surname']
-    email = data['email']
-    phone_number = data['phone_number']
-    membership_duration_hours = data.get('membership_duration_hours', 24)  # Default to 24 hours
-
-    # Process user creation in a separate thread to avoid blocking
-    threading.Thread(target=process_user_creation, args=(given_name, surname, email, phone_number, membership_duration_hours)).start()
-
-    return jsonify({'status': 'User creation in progress'}), 200
+        logger.exception(f"Error in simulating unlock: {e}")
 
 # ----------------------------
 # Main Execution
@@ -745,4 +753,4 @@ def handle_webhook():
 
 if __name__ == "__main__":
     # Run the Flask app
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000)
