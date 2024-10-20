@@ -16,6 +16,8 @@ import random
 from bson import BSON  # From pymongo
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from dotenv import load_dotenv
+load_dotenv()
 
 # ----------------------------
 # Configuration and Setup
@@ -30,8 +32,8 @@ logger = logging.getLogger(__name__)
 # Environment Variables
 BASE_ADDRESS = os.getenv("BASE_ADDRESS")
 INSTANCE_NAME = os.getenv("INSTANCE_NAME")
-USERNAME = os.getenv("KEEP_USERNAME")
-PASSWORD = os.getenv("KEEP_PASSWORD")
+KEEP_USERNAME = os.getenv("KEEP_USERNAME")
+KEEP_PASSWORD = os.getenv("KEEP_PASSWORD")
 BADGE_TYPE_NAME = os.getenv("BADGE_TYPE_NAME", "Employee Badge")
 SIMULATION_REASON = os.getenv("SIMULATION_REASON", "Automated Testing of Card Read")
 FACILITY_CODE = int(os.getenv("FACILITY_CODE", 100))
@@ -43,18 +45,30 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Check for required environment variables
 required_env_vars = [
-    'BASE_ADDRESS', 'INSTANCE_NAME', 'USERNAME', 'PASSWORD',
+    'BASE_ADDRESS', 'INSTANCE_NAME', 'KEEP_USERNAME', 'KEEP_PASSWORD',
     'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER',
     'UNLOCK_LINK_BASE_URL', 'DATABASE_URL'
 ]
 
-missing_env_vars = [var for var in required_env_vars if not globals().get(var)]
+loaded_vars = {
+    'BASE_ADDRESS': BASE_ADDRESS,
+    'INSTANCE_NAME': INSTANCE_NAME,
+    'KEEP_USERNAME': KEEP_USERNAME,
+    'KEEP_PASSWORD': KEEP_PASSWORD,
+    'TWILIO_ACCOUNT_SID': TWILIO_ACCOUNT_SID,
+    'TWILIO_AUTH_TOKEN': TWILIO_AUTH_TOKEN,
+    'TWILIO_PHONE_NUMBER': TWILIO_PHONE_NUMBER,
+    'UNLOCK_LINK_BASE_URL': UNLOCK_LINK_BASE_URL,
+    'DATABASE_URL': DATABASE_URL
+}
+
+missing_env_vars = [var for var, value in loaded_vars.items() if not value]
 if missing_env_vars:
     logger.error(f"Missing environment variables: {', '.join(missing_env_vars)}")
     sys.exit(1)
 
 # Database Configuration using DATABASE_URL
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -264,10 +278,13 @@ def create_user(base_address, access_token, instance_id, given_name, surname, em
     card_number = generate_card_number()
 
     user_data = {
-        "GivenName": given_name,
-        "Surname": surname,
-        "Email": email,
-        "PhoneNumber": phone_number,
+        "CommonName": f"{given_name} {surname}",
+        "Fields": {
+            "GivenName": given_name,
+            "Surname": surname,
+            "EmailAddress": email,
+            "PhoneNumbers": [phone_number]
+        },
         "ObjectLinks": [
             {
                 "Relation": "BadgeType",
@@ -495,6 +512,47 @@ def parse_full_name(full_name):
     surname = parts[-1]
     return given_name, surname
 
+def generate_unlock_token(user):
+    """
+    Generates a unique unlock token for the user and saves it to the database.
+    """
+    token_str = str(uuid.uuid4())
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)  # Token valid for 15 minutes
+
+    with app.app_context():
+        unlock_token = UnlockToken(
+            token=token_str,
+            user_id=user.id,
+            expires_at=expires_at
+        )
+        db.session.add(unlock_token)
+        db.session.commit()
+
+    return token_str
+
+def create_unlock_link(token):
+    """
+    Creates an unlock link using the provided token.
+    """
+    unlock_link = f"{UNLOCK_LINK_BASE_URL}?token={token}"
+    return unlock_link
+
+def send_sms(phone_number, unlock_link):
+    """
+    Sends an SMS message with the unlock link to the specified phone number.
+    """
+    message_body = f"Your unlock link: {unlock_link}"
+
+    try:
+        client.messages.create(
+            body=message_body,
+            from_=TWILIO_PHONE_NUMBER,
+            to=phone_number
+        )
+        logger.info(f"SMS sent to {phone_number}")
+    except Exception as e:
+        logger.error(f"Failed to send SMS to {phone_number}: {e}")
+
 # ----------------------------
 # User Creation and Messaging Workflow
 # ----------------------------
@@ -508,8 +566,8 @@ def process_user_creation(given_name, surname, email, phone_number, membership_d
         access_token, instance_id = get_access_token(
             base_address=BASE_ADDRESS,
             instance_name=INSTANCE_NAME,
-            username=USERNAME,
-            password=PASSWORD
+            username=KEEP_USERNAME,
+            password=KEEP_PASSWORD
         )
 
         # Step 2: Get or Create Badge Type
@@ -661,8 +719,8 @@ def simulate_unlock(card_number):
         access_token, instance_id = get_access_token(
             base_address=BASE_ADDRESS,
             instance_name=INSTANCE_NAME,
-            username=USERNAME,
-            password=PASSWORD
+            username=KEEP_USERNAME,
+            password=KEEP_PASSWORD
         )
 
         # Retrieve required components
@@ -704,23 +762,6 @@ def simulate_unlock(card_number):
 
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
-def generate_unlock_token(user):
-    """
-    Generates a unique unlock token for the user and saves it to the database.
-    """
-    token_str = str(uuid.uuid4())
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)  # Token valid for 15 minutes
-
-    with app.app_context():
-        unlock_token = UnlockToken(
-            token=token_str,
-            user_id=user.id,
-            expires_at=expires_at
-        )
-        db.session.add(unlock_token)
-        db.session.commit()
-
-    return token_str
 
 # ----------------------------
 # Main Execution
