@@ -580,7 +580,7 @@ def send_sms(phone_number, unlock_link):
         logger.error(f"Failed to send SMS to {phone_number}: {e}")
 
 def test_send_sms():
-    test_phone_number = "+16158031342"  # Replace with your verified number
+    test_phone_number = "+18777804236"  # Replace with your verified number
     test_unlock_link = "https://your-app-url.com/unlock?token=TESTTOKEN1234"
     send_sms(test_phone_number, test_unlock_link)
 test_send_sms()
