@@ -18,7 +18,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
 from flask_cors import CORS
-
+app.config['DEBUG'] = True
 load_dotenv()
 
 # ----------------------------
