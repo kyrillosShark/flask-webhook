@@ -674,7 +674,18 @@ def validate_unlock_token(token):
 # ----------------------------
 # Flask Routes
 # ----------------------------
-
+@app.route('/reset_database', methods=['POST'])
+def reset_database():
+    if not app.config['DEBUG']:
+        abort(403, description="Forbidden")
+    
+    try:
+        db.drop_all()
+        db.create_all()
+        return jsonify({'status': 'Database reset successfully'}), 200
+    except Exception as e:
+        logger.exception(f"Error resetting database: {e}")
+        return jsonify({'error': 'Failed to reset database'}), 500
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
     data = request.json
