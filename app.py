@@ -17,6 +17,8 @@ from bson import BSON  # From pymongo
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
+from flask_cors import CORS
+
 load_dotenv()
 
 # ----------------------------
@@ -24,6 +26,7 @@ load_dotenv()
 # ----------------------------
 
 app = Flask(__name__)
+CORS(app)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
