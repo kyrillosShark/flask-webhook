@@ -18,7 +18,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from dotenv import load_dotenv
 from flask_cors import CORS
-app.config['DEBUG'] = True
+
 load_dotenv()
 
 # ----------------------------
@@ -31,7 +31,7 @@ CORS(app)
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
-
+app.config['DEBUG'] = True
 # Environment Variables
 BASE_ADDRESS = os.getenv("BASE_ADDRESS")
 INSTANCE_NAME = os.getenv("INSTANCE_NAME")
