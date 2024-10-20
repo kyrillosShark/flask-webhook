@@ -6,3 +6,4 @@ twilio
 Flask-SQLAlchemy
 pymongo
 Flask-Migrate
+psycopg2
