@@ -1,5 +1,8 @@
 from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
 import os
+import logging
 import threading
 import uuid
 import datetime
@@ -7,14 +10,12 @@ from datetime import timezone, timedelta
 from twilio.rest import Client
 import requests
 import json
-import sys
 import base64
+import sys
 import random
-import logging
 from bson import BSON  # From pymongo
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from flask_sqlalchemy import SQLAlchemy
 
 # ----------------------------
 # Configuration and Setup
@@ -43,7 +44,7 @@ UNLOCK_LINK_BASE_URL = os.getenv("UNLOCK_LINK_BASE_URL")
 required_env_vars = [
     'BASE_ADDRESS', 'INSTANCE_NAME', 'USERNAME', 'PASSWORD',
     'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER',
-    'UNLOCK_LINK_BASE_URL'
+    'UNLOCK_LINK_BASE_URL', 'DATABASE_URL'
 ]
 
 missing_env_vars = [var for var in required_env_vars if not globals().get(var)]
@@ -51,10 +52,13 @@ if missing_env_vars:
     logger.error(f"Missing environment variables: {', '.join(missing_env_vars)}")
     sys.exit(1)
 
-# Database Configuration (SQLite Example)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///unlock_tokens.db'
+# Database Configuration using DATABASE_URL
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+
+# Initialize Flask-Migrate
+migrate = Migrate(app, db)
 
 # Initialize Twilio Client
 client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
@@ -74,10 +78,6 @@ def create_session():
     return session
 
 SESSION = create_session()
-
-# Initialize the database
-with app.app_context():
-    db.create_all()
 
 # ----------------------------
 # Database Models
@@ -555,55 +555,6 @@ def process_user_creation(given_name, surname, email, phone_number, membership_d
 
     except Exception as e:
         logger.exception(f"Error in processing user creation: {e}")
-
-def generate_unlock_token(user):
-    """
-    Generates a unique unlock token for a user, valid until the membership ends.
-    """
-    token = str(uuid.uuid4())
-    expires_at = user.membership_end  # Token expires when membership ends
-
-    with app.app_context():
-        unlock_token = UnlockToken(
-            token=token,
-            user_id=user.id,
-            expires_at=expires_at
-        )
-
-        db.session.add(unlock_token)
-        db.session.commit()
-
-    logger.info(f"Generated unlock token for user ID {user.id}")
-    return token
-
-def create_unlock_link(token):
-    """
-    Creates a secure unlock link containing the token.
-    """
-    if not UNLOCK_LINK_BASE_URL:
-        logger.error("UNLOCK_LINK_BASE_URL is not set.")
-        raise Exception("Unlock link base URL is not set. Please configure UNLOCK_LINK_BASE_URL.")
-    return f"{UNLOCK_LINK_BASE_URL}?token={token}"
-
-def send_sms(to_phone_number, unlock_link):
-    """
-    Sends an SMS with the unlock link to the user's phone number.
-    """
-    if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER]):
-        logger.error("Twilio credentials are not set properly.")
-        return
-
-    message_body = f"Welcome! Click the link to unlock your door: {unlock_link}\nNote: This link is valid for the duration of your membership."
-
-    try:
-        message = client.messages.create(
-            body=message_body,
-            from_=TWILIO_PHONE_NUMBER,
-            to=to_phone_number
-        )
-        logger.info(f"SMS sent to {to_phone_number}: SID {message.sid}")
-    except Exception as e:
-        logger.error(f"Failed to send SMS to {to_phone_number}: {e}")
 
 # ----------------------------
 # Unlock Token Management
