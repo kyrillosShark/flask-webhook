@@ -8,7 +8,7 @@ import threading
 import datetime
 from datetime import timezone, timedelta
 import random
-from flask import Flask, request, jsonify, abort
+from flask import Flask, request, jsonify, abort, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
@@ -259,9 +259,9 @@ def send_sms(phone_number, unlock_link):
         if hasattr(e, 'msg'):
             logger.error(f"Twilio Error Message: {e.msg}")
 
-def unlock_door(user):
+def unlock_door(user, duration_seconds=5):
     """
-    Sends a command to unlock the door for 5 seconds, including user's information in the event data.
+    Sends a command to unlock the door for duration_seconds seconds, including user's information in the event data.
     """
     try:
         with app.app_context():
@@ -289,7 +289,7 @@ def unlock_door(user):
                 access_token=access_token,
                 instance_id=instance_id,
                 door=door,
-                duration_seconds=5,
+                duration_seconds=duration_seconds,
                 user=user
             )
 
@@ -479,34 +479,55 @@ def handle_webhook():
 
     return jsonify({'status': 'User creation in progress'}), 200
 
-@app.route('/unlock', methods=['GET'])
+@app.route('/unlock', methods=['GET', 'POST'])
 def handle_unlock():
-    token = request.args.get('token')
+    if request.method == 'GET':
+        token = request.args.get('token')
 
-    if not token:
-        logger.warning("Unlock attempt without token.")
-        return jsonify({'error': 'Token is missing'}), 400
+        if not token:
+            logger.warning("Unlock attempt without token.")
+            return jsonify({'error': 'Token is missing'}), 400
 
-    is_valid, result = validate_unlock_token(token)
+        is_valid, result = validate_unlock_token(token)
 
-    if not is_valid:
-        logger.warning(f"Invalid unlock token: {result}")
-        return jsonify({'error': result}), 400
+        if not is_valid:
+            logger.warning(f"Invalid unlock token: {result}")
+            return jsonify({'error': result}), 400
 
-    unlock_token = result
+        unlock_token = result
 
-    with app.app_context():
-        unlock_token.used = True
-        db.session.commit()
+        # Render the unlock page with the unlock button
+        return render_template('unlock.html', token=token)
 
-    user = unlock_token.user
+    elif request.method == 'POST':
+        # Handle the form submission when the unlock button is clicked
+        token = request.form.get('token')
+        if not token:
+            logger.warning("Unlock attempt without token in form.")
+            return jsonify({'error': 'Token is missing in form submission'}), 400
 
-    logger.info(f"Unlocking door for user: {user.first_name} {user.last_name}, Email: {user.email}, Phone: {user.phone_number}")
+        is_valid, result = validate_unlock_token(token)
 
-    # Unlock the door in a separate thread to avoid blocking
-    threading.Thread(target=unlock_door, args=(user,)).start()
+        if not is_valid:
+            logger.warning(f"Invalid unlock token: {result}")
+            return jsonify({'error': result}), 400
 
-    return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
+        unlock_token = result
+
+        # Mark the token as used
+        with app.app_context():
+            unlock_token.used = True
+            db.session.commit()
+
+        user = unlock_token.user
+
+        logger.info(f"Unlocking door for user: {user.first_name} {user.last_name}, Email: {user.email}, Phone: {user.phone_number}")
+
+        # Unlock the door in a separate thread to avoid blocking
+        threading.Thread(target=unlock_door, args=(user, 3)).start()  # Unlock for 3 seconds
+
+        # Render a success page or message
+        return render_template('unlock.html', message='Door is unlocking for 3 seconds. Please wait...')
 
 @app.route('/test_send_unlock_sms', methods=['GET'])
 def test_send_unlock_sms():
