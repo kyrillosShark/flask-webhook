@@ -7,4 +7,3 @@ twilio
 requests
 python-dotenv
 pymongo
-bson
