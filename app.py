@@ -567,6 +567,12 @@ def send_sms(phone_number, unlock_link):
         logger.info(f"SMS sent to {phone_number}. SID: {message.sid}, Status: {message.status}")
     except Exception as e:
         logger.error(f"Failed to send SMS to {phone_number}: {e}")
+        # If the exception is a TwilioRestException, it contains more details
+        if hasattr(e, 'code'):
+            logger.error(f"Twilio Error Code: {e.code}")
+        if hasattr(e, 'msg'):
+            logger.error(f"Twilio Error Message: {e.msg}")
+
 
 # ----------------------------
 # User Creation and Messaging Workflow
