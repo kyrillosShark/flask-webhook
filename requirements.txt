@@ -8,4 +8,4 @@ requests
 python-dotenv
 pymongo
 psycopg2
-Flask-limiter
+flask-limiter
