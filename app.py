@@ -461,24 +461,26 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     """
     event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
 
-    # Ensure card_number and facility_code are integers
-    card_number_int = int(card_number)
-    facility_code_int = int(facility_code)
+    # Convert card_number to hexadecimal string (ensure 26-bit HID format)
+    encoded_card_number_hex = format(int(card_number), 'x')
 
-    # Construct EventData as a dictionary with correct data types
+    # Ensure facility_code is an integer and convert it to a string for BSON encoding
+    try:
+        facility_code = int(facility_code)
+    except ValueError:
+        logger.error(f"Invalid facility code: {facility_code}. Must be an integer.")
+        return False
+
+    # Construct EventData as a dictionary
     event_data = {
         "Reason": reason,
-        "FacilityCode": facility_code_int,
-        "EncodedCardNumber": card_number_int
+        "FacilityCode": str(facility_code),  # Convert facility code to string
+        "EncodedCardNumber": encoded_card_number_hex
     }
-
-    logger.info(f"Event Data before encoding: {event_data}")
 
     # Convert EventData to BSON and then to Base64
     event_data_bson = BSON.encode(event_data)
     event_data_base64 = base64.b64encode(event_data_bson).decode('utf-8')
-
-    logger.info(f"EventDataBsonBase64: {event_data_base64}")
 
     # Construct the payload
     payload = {
@@ -529,10 +531,6 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         response.raise_for_status()
         logger.info("Card read simulation event published successfully.")
         return True
-    except requests.exceptions.HTTPError as http_err:
-        logger.error(f"HTTP error during event publishing: {http_err}")
-        logger.error(f"Response Content: {response.text}")
-        return False
     except Exception as err:
         logger.error(f"Error during event publishing: {err}")
         return False
