@@ -108,7 +108,8 @@ class User(db.Model):
     last_name = db.Column(db.String(50), nullable=False)
     email = db.Column(db.String(120), unique=False, nullable=False)
     phone_number = db.Column(db.String(20), unique=False, nullable=False)
-    card_number = db.Column(db.String(20), unique=False, nullable=False)
+    card_number = db.Column(db.Integer, unique=False, nullable=False)  # Changed to Integer
+    facility_code = db.Column(db.Integer, unique=False, nullable=False)  # Added facility_code
     membership_start = db.Column(db.DateTime, nullable=False)
     membership_end = db.Column(db.DateTime, nullable=False)
 
@@ -262,12 +263,12 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
 
 def generate_card_number():
     """
-    Generates a random 26-bit HID card number.
+    Generates a random 5-digit card number for 26-bit HID format.
 
     Returns:
-        int: A 26-bit card number.
+        int: A 5-digit card number in the range of 1 to 65535.
     """
-    card_number = random.randint(0, 67108863)
+    card_number = random.randint(1, 65535)
     return card_number
 
 def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours):
@@ -280,6 +281,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
     card_number = generate_card_number()
+    facility_code = FACILITY_CODE  # Use the global facility code
 
     # Prepare the current and expiration times
     active_on = datetime.datetime.utcnow().isoformat()
@@ -317,6 +319,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
                 "EncodedCardNumber": int(card_number),
                 "DisplayCardNumber": str(card_number),
+                "FacilityCode": int(facility_code),  # Added FacilityCode
                 "ActiveOn": active_on,
                 "ExpiresOn": expires_on,
                 "AntiPassbackExempt": False,
@@ -327,7 +330,10 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             {
                 "$type": "Feenics.Keep.WebApi.Model.MetadataItem, Feenics.Keep.WebApi.Model",
                 "Application": "CustomApp",
-                "Values": json.dumps({"CardNumber": format(card_number, 'x')}),
+                "Values": json.dumps({
+                    "CardNumber": str(card_number),
+                    "FacilityCode": str(facility_code)
+                }),
                 "ShouldPublishUpdateEvents": False
             }
         ]
@@ -349,7 +355,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             raise Exception("User ID not found in the response.")
 
         logger.info(f"User '{first_name} {last_name}' created successfully with ID: {user_id}")
-        logger.info(f"Assigned Card Number: {card_number} (Hex: {format(card_number, 'x')})")
+        logger.info(f"Assigned Card Number: {card_number}, Facility Code: {facility_code}")
 
         # Create User in local database
         membership_start = datetime.datetime.utcnow()
@@ -360,7 +366,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             last_name=last_name,
             email=email,
             phone_number=phone_number,
-            card_number=str(card_number),
+            card_number=card_number,  # Stored as integer
+            facility_code=facility_code,
             membership_start=membership_start,
             membership_end=membership_end
         )
@@ -454,19 +461,24 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     """
     event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
 
-    # Convert card_number to hexadecimal string
-    encoded_card_number_hex = format(int(card_number), 'x')
+    # Ensure card_number and facility_code are integers
+    card_number_int = int(card_number)
+    facility_code_int = int(facility_code)
 
-    # Construct EventData as a dictionary
+    # Construct EventData as a dictionary with correct data types
     event_data = {
         "Reason": reason,
-        "FacilityCode": str(facility_code),
-        "EncodedCardNumber": encoded_card_number_hex
+        "FacilityCode": facility_code_int,
+        "EncodedCardNumber": card_number_int
     }
+
+    logger.info(f"Event Data before encoding: {event_data}")
 
     # Convert EventData to BSON and then to Base64
     event_data_bson = BSON.encode(event_data)
     event_data_base64 = base64.b64encode(event_data_bson).decode('utf-8')
+
+    logger.info(f"EventDataBsonBase64: {event_data_base64}")
 
     # Construct the payload
     payload = {
@@ -517,6 +529,10 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         response.raise_for_status()
         logger.info("Card read simulation event published successfully.")
         return True
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error during event publishing: {http_err}")
+        logger.error(f"Response Content: {response.text}")
+        return False
     except Exception as err:
         logger.error(f"Error during event publishing: {err}")
         return False
@@ -721,13 +737,16 @@ def handle_unlock():
         db.session.commit()
 
     card_number = unlock_token.user.card_number
+    facility_code = unlock_token.user.facility_code
+
+    logger.info(f"Simulating unlock for card number: {card_number}, facility code: {facility_code}")
 
     # Simulate the card read in a separate thread to avoid blocking
-    threading.Thread(target=simulate_unlock, args=(card_number,)).start()
+    threading.Thread(target=simulate_unlock, args=(card_number, facility_code)).start()
 
     return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
 
-def simulate_unlock(card_number):
+def simulate_unlock(card_number, facility_code):
     """
     Simulates the card read to unlock the door.
     """
@@ -769,7 +788,7 @@ def simulate_unlock(card_number):
                 card_format=card_format,
                 controller=controller,
                 reason=SIMULATION_REASON,
-                facility_code=FACILITY_CODE,
+                facility_code=facility_code,
                 card_number=card_number
             )
 
