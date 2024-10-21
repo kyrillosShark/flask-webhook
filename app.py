@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, abort
+from flask import Flask, request, jsonify, abort, copy_current_app_context
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 import os
@@ -32,6 +32,7 @@ CORS(app)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 app.config['DEBUG'] = True
+
 # Environment Variables
 BASE_ADDRESS = os.getenv("BASE_ADDRESS")
 INSTANCE_NAME = os.getenv("INSTANCE_NAME")
@@ -354,19 +355,18 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         membership_start = datetime.datetime.utcnow()
         membership_end = membership_start + timedelta(hours=membership_duration_hours)  # Customizable duration
 
-        with app.app_context():
-            user = User(
-                first_name=first_name,
-                last_name=last_name,
-                email=email,
-                phone_number=phone_number,
-                card_number=str(card_number),
-                membership_start=membership_start,
-                membership_end=membership_end
-            )
+        user = User(
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            phone_number=phone_number,
+            card_number=str(card_number),
+            membership_start=membership_start,
+            membership_end=membership_end
+        )
 
-            db.session.add(user)
-            db.session.commit()
+        db.session.add(user)
+        db.session.commit()
 
         return user
     except Exception as err:
@@ -521,7 +521,7 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         logger.error(f"Error during event publishing: {err}")
         return False
 
-def generate_unlock_token(user):
+def generate_unlock_token(user_id):
     """
     Generates a unique unlock token for the user and saves it to the database.
     """
@@ -529,6 +529,11 @@ def generate_unlock_token(user):
     expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)  # Token valid for 15 minutes
 
     with app.app_context():
+        user = User.query.get(user_id)
+        if not user:
+            logger.error(f"User with ID {user_id} not found.")
+            return None
+
         unlock_token = UnlockToken(
             token=token_str,
             user_id=user.id,
@@ -562,38 +567,40 @@ def send_sms(phone_number, unlock_link):
         logger.info(f"SMS sent to {phone_number}. SID: {message.sid}, Status: {message.status}")
     except Exception as e:
         logger.error(f"Failed to send SMS to {phone_number}: {e}")
+
 # ----------------------------
 # User Creation and Messaging Workflow
 # ----------------------------
 
+@copy_current_app_context
 def process_user_creation(first_name, last_name, email, phone_number, membership_duration_hours=24):
     """
     Complete workflow to create a user in CRM, store membership info, generate unlock link, and send an SMS.
     """
     try:
-        # Step 1: Authenticate
-        access_token, instance_id = get_access_token(
-            base_address=BASE_ADDRESS,
-            instance_name=INSTANCE_NAME,
-            username=KEEP_USERNAME,
-            password=KEEP_PASSWORD
-        )
-
-        # Step 2: Get or Create Badge Type
-        badge_types = get_badge_types(BASE_ADDRESS, access_token, instance_id)
-        badge_type_info = next((bt for bt in badge_types if bt.get("CommonName") == BADGE_TYPE_NAME), None)
-
-        if not badge_type_info:
-            logger.info(f"Badge Type '{BADGE_TYPE_NAME}' does not exist. Creating it now.")
-            badge_type_response = create_badge_type(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
-            if badge_type_response:
-                badge_type_info = badge_type_response
-            else:
-                # If Badge Type already exists (status code 409), retrieve its details
-                badge_type_info = get_badge_type_details(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
-
-        # Step 3: Check if user exists in the database
         with app.app_context():
+            # Step 1: Authenticate
+            access_token, instance_id = get_access_token(
+                base_address=BASE_ADDRESS,
+                instance_name=INSTANCE_NAME,
+                username=KEEP_USERNAME,
+                password=KEEP_PASSWORD
+            )
+
+            # Step 2: Get or Create Badge Type
+            badge_types = get_badge_types(BASE_ADDRESS, access_token, instance_id)
+            badge_type_info = next((bt for bt in badge_types if bt.get("CommonName") == BADGE_TYPE_NAME), None)
+
+            if not badge_type_info:
+                logger.info(f"Badge Type '{BADGE_TYPE_NAME}' does not exist. Creating it now.")
+                badge_type_response = create_badge_type(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
+                if badge_type_response:
+                    badge_type_info = badge_type_response
+                else:
+                    # If Badge Type already exists (status code 409), retrieve its details
+                    badge_type_info = get_badge_type_details(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
+
+            # Step 3: Check if user exists in the database
             existing_user = User.query.filter_by(email=email).first()
 
             if existing_user:
@@ -613,12 +620,12 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 membership_duration_hours=membership_duration_hours
             )
 
-        # Step 4: Generate Unlock Token and Link
-        unlock_token_str = generate_unlock_token(user)
-        unlock_link = create_unlock_link(unlock_token_str)
+            # Step 4: Generate Unlock Token and Link
+            unlock_token_str = generate_unlock_token(user.id)
+            unlock_link = create_unlock_link(unlock_token_str)
 
-        # Step 5: Send SMS with Unlock Link
-        send_sms(phone_number, unlock_link)
+            # Step 5: Send SMS with Unlock Link
+            send_sms(phone_number, unlock_link)
 
     except Exception as e:
         logger.exception(f"Error in processing user creation: {e}")
@@ -717,6 +724,7 @@ def handle_unlock():
 
     return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
 
+@copy_current_app_context
 def simulate_unlock(card_number):
     """
     Simulates the card read to unlock the door.
@@ -776,53 +784,54 @@ def test_send_unlock_sms():
     Test route to create a test user and send an unlock link via SMS.
     """
     try:
-        # Step 1: Authenticate
-        access_token, instance_id = get_access_token(
-            base_address=BASE_ADDRESS,
-            instance_name=INSTANCE_NAME,
-            username=KEEP_USERNAME,
-            password=KEEP_PASSWORD
-        )
+        with app.app_context():
+            # Step 1: Authenticate
+            access_token, instance_id = get_access_token(
+                base_address=BASE_ADDRESS,
+                instance_name=INSTANCE_NAME,
+                username=KEEP_USERNAME,
+                password=KEEP_PASSWORD
+            )
 
-        # Step 2: Get or Create Badge Type
-        badge_types = get_badge_types(BASE_ADDRESS, access_token, instance_id)
-        badge_type_info = next((bt for bt in badge_types if bt.get("CommonName") == BADGE_TYPE_NAME), None)
+            # Step 2: Get or Create Badge Type
+            badge_types = get_badge_types(BASE_ADDRESS, access_token, instance_id)
+            badge_type_info = next((bt for bt in badge_types if bt.get("CommonName") == BADGE_TYPE_NAME), None)
 
-        if not badge_type_info:
-            logger.info(f"Badge Type '{BADGE_TYPE_NAME}' does not exist. Creating it now.")
-            badge_type_response = create_badge_type(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
-            if badge_type_response:
-                badge_type_info = badge_type_response
-            else:
-                # If Badge Type already exists (status code 409), retrieve its details
-                badge_type_info = get_badge_type_details(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
+            if not badge_type_info:
+                logger.info(f"Badge Type '{BADGE_TYPE_NAME}' does not exist. Creating it now.")
+                badge_type_response = create_badge_type(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
+                if badge_type_response:
+                    badge_type_info = badge_type_response
+                else:
+                    # If Badge Type already exists (status code 409), retrieve its details
+                    badge_type_info = get_badge_type_details(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
 
-        # Step 3: Create a Test User
-        first_name = "Test"
-        last_name = "User"
-        email = f"test.user{random.randint(1000,9999)}@example.com"
-        phone_number = "+1234567890"  # Use a valid test number
-        membership_duration_hours = 24  # 24-hour membership for testing
+            # Step 3: Create a Test User
+            first_name = "Test"
+            last_name = "User"
+            email = f"test.user{random.randint(1000,9999)}@example.com"
+            phone_number = "+1234567890"  # Use a valid test number
+            membership_duration_hours = 24  # 24-hour membership for testing
 
-        # Create the user via CRM API and store in local database
-        user = create_user(
-            base_address=BASE_ADDRESS,
-            access_token=access_token,
-            instance_id=instance_id,
-            first_name=first_name,
-            last_name=last_name,
-            email=email,
-            phone_number=phone_number,
-            badge_type_info=badge_type_info,
-            membership_duration_hours=membership_duration_hours
-        )
+            # Create the user via CRM API and store in local database
+            user = create_user(
+                base_address=BASE_ADDRESS,
+                access_token=access_token,
+                instance_id=instance_id,
+                first_name=first_name,
+                last_name=last_name,
+                email=email,
+                phone_number=phone_number,
+                badge_type_info=badge_type_info,
+                membership_duration_hours=membership_duration_hours
+            )
 
-        # Step 4: Generate Unlock Token and Link
-        unlock_token_str = generate_unlock_token(user)
-        unlock_link = create_unlock_link(unlock_token_str)
+            # Step 4: Generate Unlock Token and Link
+            unlock_token_str = generate_unlock_token(user.id)
+            unlock_link = create_unlock_link(unlock_token_str)
 
-        # Step 5: Send SMS with Unlock Link
-        send_sms(phone_number, unlock_link)
+            # Step 5: Send SMS with Unlock Link
+            send_sms(phone_number, unlock_link)
 
         return jsonify({
             'status': 'Test unlock link SMS sent successfully',
