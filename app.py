@@ -2,7 +2,6 @@ import os
 import sys
 import json
 import uuid
-import random
 import base64
 import logging
 import threading
@@ -41,9 +40,6 @@ BASE_ADDRESS = os.getenv("BASE_ADDRESS")
 INSTANCE_NAME = os.getenv("INSTANCE_NAME")
 KEEP_USERNAME = os.getenv("KEEP_USERNAME")
 KEEP_PASSWORD = os.getenv("KEEP_PASSWORD")
-BADGE_TYPE_NAME = os.getenv("BADGE_TYPE_NAME", "Employee Badge")
-SIMULATION_REASON = os.getenv("SIMULATION_REASON", "Automated Testing of Card Read")
-FACILITY_CODE = int(os.getenv("FACILITY_CODE", 100))
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
@@ -111,9 +107,6 @@ class User(db.Model):
     last_name = db.Column(db.String(50), nullable=False)
     email = db.Column(db.String(120), unique=False, nullable=False)
     phone_number = db.Column(db.String(20), unique=False, nullable=False)
-    card_number = db.Column(db.Integer, unique=False, nullable=False)
-    facility_code = db.Column(db.Integer, unique=False, nullable=False)
-    issue_code = db.Column(db.Integer, unique=False, nullable=True)  # Make nullable
     membership_start = db.Column(db.DateTime, nullable=False)
     membership_end = db.Column(db.DateTime, nullable=False)
 
@@ -186,11 +179,14 @@ def get_access_token(base_address, instance_name, username, password):
         logger.error(f"Error during CRM login: {err}")
         raise
 
-def get_instance_settings(base_address, access_token, instance_id):
+def get_doors(base_address, access_token, instance_id):
     """
-    Retrieves the instance settings, including IssueCodeSize.
+    Retrieves a list of available Doors.
+
+    Returns:
+        list: List of door objects.
     """
-    settings_endpoint = f"{base_address}/api/f/{instance_id}/settings"
+    doors_endpoint = f"{base_address}/api/f/{instance_id}/doors"
 
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -198,462 +194,14 @@ def get_instance_settings(base_address, access_token, instance_id):
     }
 
     try:
-        response = SESSION.get(settings_endpoint, headers=headers)
+        response = SESSION.get(doors_endpoint, headers=headers)
         response.raise_for_status()
-        settings = response.json()
-        logger.info("Retrieved instance settings successfully.")
-        return settings
+        doors = response.json()
+        logger.info(f"Retrieved {len(doors)} doors.")
+        return doors
     except Exception as err:
-        logger.error(f"Error retrieving instance settings: {err}")
+        logger.error(f"Error retrieving doors: {err}")
         raise
-
-def get_issue_code_size(settings):
-    """
-    Extracts the IssueCodeSize from the instance settings.
-    """
-    issue_code_size = settings.get('IssueCodeSize', 0)
-    logger.info(f"IssueCodeSize from instance settings: {issue_code_size}")
-    return issue_code_size
-
-def get_badge_types(base_address, access_token, instance_id):
-    """
-    Retrieves a list of available Badge Types.
-    """
-    get_badge_types_endpoint = f"{base_address}/api/f/{instance_id}/badgetypes"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = SESSION.get(get_badge_types_endpoint, headers=headers)
-        response.raise_for_status()
-
-        badge_types = response.json()
-        logger.info(f"Retrieved {len(badge_types)} badge types.")
-        return badge_types
-    except Exception as err:
-        logger.error(f"Error retrieving badge types: {err}")
-        raise
-
-def create_badge_type(base_address, access_token, instance_id, badge_type_name):
-    """
-    Creates a new Badge Type in the Keep by Feenics system.
-
-    Returns:
-        dict: Details of the created Badge Type.
-    """
-    create_badge_endpoint = f"{base_address}/api/f/{instance_id}/badgetypes"
-
-    badge_type_data = {
-        "CommonName": badge_type_name,
-        "Description": f"{badge_type_name} Description"
-    }
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = SESSION.post(create_badge_endpoint, headers=headers, json=badge_type_data)
-        response.raise_for_status()
-
-        response_data = response.json()
-        badge_type_id = response_data.get("Key")
-
-        if not badge_type_id:
-            raise Exception("Badge Type ID not found in the response.")
-
-        logger.info(f"Badge Type '{badge_type_name}' created successfully with ID: {badge_type_id}")
-        return response_data
-    except requests.exceptions.HTTPError as http_err:
-        if response.status_code == 409:
-            logger.info(f"Badge Type '{badge_type_name}' already exists.")
-            return None
-        else:
-            logger.error(f"HTTP error during Badge Type creation: {http_err}")
-            logger.error(f"Response Content: {response.text}")
-            raise
-    except Exception as err:
-        logger.error(f"Error during Badge Type creation: {err}")
-        raise
-
-def get_badge_type_details(base_address, access_token, instance_id, badge_type_name):
-    """
-    Retrieves details of a specific Badge Type.
-
-    Returns:
-        dict: Details of the Badge Type.
-    """
-    badge_types = get_badge_types(base_address, access_token, instance_id)
-
-    for bt in badge_types:
-        if bt.get("CommonName") == badge_type_name:
-            return bt
-
-    raise Exception(f"Badge Type '{badge_type_name}' not found after creation.")
-
-def generate_card_number():
-    """
-    Generates a random card number within the valid range for 26-bit HID.
-
-    Returns:
-        int: A card number in the range of 1 to 65535.
-    """
-    card_number = random.randint(1, 65535)  # 16-bit card number
-    logger.info(f"Generated Card Number: {card_number}")
-    return card_number
-
-def get_access_levels(base_address, access_token, instance_id):
-    """
-    Retrieves a list of all available Access Levels.
-
-    Returns:
-        list: List of access level objects.
-    """
-    access_levels_endpoint = f"{base_address}/api/f/{instance_id}/accesslevels"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = SESSION.get(access_levels_endpoint, headers=headers)
-        response.raise_for_status()
-        access_levels = response.json()
-        logger.info(f"Retrieved {len(access_levels)} access levels.")
-        return access_levels
-    except Exception as err:
-        logger.error(f"Error retrieving access levels: {err}")
-        raise
-
-def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours, issue_code_size):
-    """
-    Creates a new user in the Keep by Feenics system with access to all access levels.
-
-    Returns:
-        User: The created User object.
-    """
-    create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
-
-    card_number = generate_card_number()
-    facility_code = FACILITY_CODE
-
-    # Generate IssueCode if required
-    if issue_code_size > 0:
-        max_issue_code = (1 << (issue_code_size * 8)) - 1  # Calculate max value based on size in bytes
-        issue_code = random.randint(1, max_issue_code)
-        logger.info(f"Generated IssueCode: {issue_code}")
-    else:
-        issue_code = None  # IssueCode not required
-        logger.info("IssueCode not required for this configuration.")
-
-    # **Modification: Ensure EncodedCardNumber equals DisplayCardNumber**
-    encoded_card_number = card_number  # Set EncodedCardNumber equal to CardNumber
-    display_card_number = str(card_number).zfill(5)  # Ensure it's 5 digits with leading zeros if necessary
-    logger.info(f"EncodedCardNumber: {encoded_card_number}, DisplayCardNumber: {display_card_number}")
-
-    # Prepare the current and expiration times
-    membership_start = datetime.datetime.utcnow()
-    membership_end = membership_start + timedelta(hours=membership_duration_hours)
-    active_on = membership_start.isoformat() + 'Z'
-    expires_on = membership_end.isoformat() + 'Z'
-
-    # Retrieve all access levels
-    access_levels = get_access_levels(base_address, access_token, instance_id)
-    if not access_levels:
-        logger.error("No access levels found.")
-        raise Exception("No access levels available to assign to the user.")
-
-    # **Modification: Assign all retrieved access levels to the user**
-    access_level_assignments = []
-    for al in access_levels:
-        assignment = {
-            "$type": "Feenics.Keep.WebApi.Model.AccessLevelAssignmentInfo, Feenics.Keep.WebApi.Model",
-            "AccessLevelKey": al.get("Key"),
-            "ActiveOn": active_on,
-            "ExpiresOn": expires_on
-        }
-        access_level_assignments.append(assignment)
-        logger.debug(f"Assigned AccessLevelKey: {al.get('Key')} to user.")
-
-    # Prepare Card Assignment
-    card_assignment = {
-        "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
-        "EncodedCardNumber": int(encoded_card_number),
-        "DisplayCardNumber": display_card_number,
-        "FacilityCode": int(facility_code),
-        "ActiveOn": active_on,
-        "ExpiresOn": expires_on,
-        "AntiPassbackExempt": False,
-        "ExtendedAccess": False,
-        "PinExempt": True,
-        "IsDisabled": False,
-        "ManagerLevel": 0,
-        "Note": None,
-        "OriginalUseCount": None,
-        "CurrentUseCount": 0,
-    }
-
-    # Include IssueCode if required
-    if issue_code is not None:
-        card_assignment["IssueCode"] = int(issue_code)
-        logger.debug(f"Assigned IssueCode: {issue_code} to card.")
-
-    user_data = {
-        "$type": "Feenics.Keep.WebApi.Model.PersonInfo, Feenics.Keep.WebApi.Model",
-        "CommonName": f"{first_name} {last_name}",
-        "GivenName": first_name,
-        "Surname": last_name,
-        "Addresses": [
-            {
-                "$type": "Feenics.Keep.WebApi.Model.EmailAddressInfo, Feenics.Keep.WebApi.Model",
-                "MailTo": email,
-                "Type": "Work"
-            },
-            {
-                "$type": "Feenics.Keep.WebApi.Model.PhoneInfo, Feenics.Keep.WebApi.Model",
-                "Number": phone_number,
-                "Type": "Mobile"
-            }
-        ],
-        "ObjectLinks": [
-            {
-                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
-                "Relation": "BadgeType",
-                "CommonName": badge_type_info.get("CommonName"),
-                "Href": badge_type_info.get("Href"),
-                "LinkedObjectKey": badge_type_info.get("Key"),
-                "MetaDataBson": None
-            }
-        ],
-        "CardAssignments": [card_assignment],
-        "AccessLevelAssignments": access_level_assignments,
-        "Metadata": [
-            {
-                "$type": "Feenics.Keep.WebApi.Model.MetadataItem, Feenics.Keep.WebApi.Model",
-                "Application": "CustomApp",
-                "Values": json.dumps({
-                    "CardNumber": display_card_number,
-                    "FacilityCode": str(facility_code),
-                    "IssueCode": str(issue_code) if issue_code else None,
-                }),
-                "ShouldPublishUpdateEvents": False
-            }
-        ]
-    }
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = SESSION.post(create_person_endpoint, headers=headers, json=user_data)
-        response.raise_for_status()
-
-        response_data = response.json()
-        user_id = response_data.get("Key")
-
-        if not user_id:
-            raise Exception("User ID not found in the response.")
-
-        logger.info(f"User '{first_name} {last_name}' created successfully with ID: {user_id}")
-        logger.info(f"Assigned EncodedCardNumber: {encoded_card_number}, Facility Code: {facility_code}, Issue Code: {issue_code}")
-
-        # Create User in local database
-        user = User(
-            first_name=first_name,
-            last_name=last_name,
-            email=email,
-            phone_number=phone_number,
-            card_number=encoded_card_number,
-            facility_code=facility_code,
-            issue_code=issue_code if issue_code else 0,
-            membership_start=membership_start,
-            membership_end=membership_end
-        )
-
-        db.session.add(user)
-        db.session.commit()
-
-        return user
-    except Exception as err:
-        logger.error(f"Error during user creation: {err}")
-        raise
-
-def get_readers(base_address, access_token, instance_id):
-    """
-    Retrieves a list of available Readers.
-
-    Returns:
-        list: List of reader objects.
-    """
-    readers_endpoint = f"{base_address}/api/f/{instance_id}/readers"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = SESSION.get(readers_endpoint, headers=headers)
-        response.raise_for_status()
-        readers = response.json()
-        logger.info(f"Retrieved {len(readers)} readers.")
-        return readers
-    except Exception as err:
-        logger.error(f"Error retrieving readers: {err}")
-        raise
-
-def get_card_formats(base_address, access_token, instance_id):
-    """
-    Retrieves a list of available Card Formats.
-
-    Returns:
-        list: List of card format objects.
-    """
-    card_formats_endpoint = f"{base_address}/api/f/{instance_id}/cardformats"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = SESSION.get(card_formats_endpoint, headers=headers)
-        response.raise_for_status()
-        card_formats = response.json()
-        logger.info(f"Retrieved {len(card_formats)} card formats.")
-        return card_formats
-    except Exception as err:
-        logger.error(f"Error retrieving card formats: {err}")
-        raise
-
-def get_controllers(base_address, access_token, instance_id):
-    """
-    Retrieves a list of available Controllers.
-
-    Returns:
-        list: List of controller objects.
-    """
-    controllers_endpoint = f"{base_address}/api/f/{instance_id}/controllers"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = SESSION.get(controllers_endpoint, headers=headers)
-        response.raise_for_status()
-        controllers = response.json()
-        logger.info(f"Retrieved {len(controllers)} controllers.")
-        return controllers
-    except Exception as err:
-        logger.error(f"Error retrieving controllers: {err}")
-        raise
-
-def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number, issue_code):
-    """
-    Simulates a card read by publishing a simulateCardRead event.
-
-    Returns:
-        bool: True if successful, False otherwise.
-    """
-    event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
-
-    # Ensure card_number and facility_code are integers
-    try:
-        card_number_int = int(card_number)
-        facility_code_int = int(facility_code)
-        issue_code_int = int(issue_code) if issue_code else None
-    except ValueError as e:
-        logger.error(f"Invalid card number, facility code, or issue code: {e}")
-        return False
-
-    # Construct EventData
-    event_data = {
-        "Reason": reason,
-        "FacilityCode": facility_code_int,
-        "EncodedCardNumber": card_number_int,
-    }
-
-    # Include IssueCode if available
-    if issue_code_int is not None:
-        event_data["IssueCode"] = issue_code_int
-
-    logger.info(f"Event Data before encoding: {event_data}")
-
-    # Convert EventData to BSON and then to Base64
-    try:
-        event_data_bson = BSON.encode(event_data)
-        event_data_base64 = base64.b64encode(event_data_bson).decode('utf-8')
-    except Exception as e:
-        logger.error(f"Error encoding EventData: {e}")
-        return False
-
-    logger.info(f"EventDataBsonBase64: {event_data_base64}")
-
-    # Construct the payload
-    payload = {
-        "$type": "Feenics.Keep.WebApi.Model.EventMessagePosting, Feenics.Keep.WebApi.Model",
-        "OccurredOn": datetime.datetime.now(timezone.utc).isoformat(),
-        "AppKey": "MercuryCommands",
-        "EventTypeMoniker": {
-            "$type": "Feenics.Keep.WebApi.Model.MonikerItem, Feenics.Keep.WebApi.Model",
-            "Namespace": "MercuryServiceCommands",
-            "Nickname": "mercury:command-simulateCardRead"
-        },
-        "RelatedObjects": [
-            {
-                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
-                "Href": reader['Href'],
-                "LinkedObjectKey": reader['Key'],
-                "CommonName": reader['CommonName'],
-                "Relation": "Reader",
-                "MetaDataBson": None
-            },
-            {
-                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
-                "Href": card_format['Href'],
-                "LinkedObjectKey": card_format['Key'],
-                "CommonName": card_format['CommonName'],
-                "Relation": "CardFormat",
-                "MetaDataBson": None
-            },
-            {
-                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
-                "Href": controller['Href'],
-                "LinkedObjectKey": controller['Key'],
-                "CommonName": controller['CommonName'],
-                "Relation": "Controller",
-                "MetaDataBson": None
-            }
-        ],
-        "EventDataBsonBase64": event_data_base64
-    }
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = SESSION.post(event_endpoint, headers=headers, json=payload)
-        response.raise_for_status()
-        logger.info("Card read simulation event published successfully.")
-        return True
-    except requests.exceptions.HTTPError as http_err:
-        logger.error(f"HTTP error during event publishing: {http_err}")
-        logger.error(f"Response Content: {response.text}")
-        return False
-    except Exception as err:
-        logger.error(f"Error during event publishing: {err}")
-        return False
 
 def generate_unlock_token(user_id):
     """
@@ -714,60 +262,32 @@ def send_sms(phone_number, unlock_link):
 
 def process_user_creation(first_name, last_name, email, phone_number, membership_duration_hours=24):
     """
-    Complete workflow to create a user in CRM, store membership info, generate unlock link, and send an SMS.
+    Complete workflow to create a user in the local database, generate unlock link, and send an SMS.
     """
     try:
         with app.app_context():
-            # Step 1: Authenticate
-            access_token, instance_id = get_access_token(
-                base_address=BASE_ADDRESS,
-                instance_name=INSTANCE_NAME,
-                username=KEEP_USERNAME,
-                password=KEEP_PASSWORD
-            )
+            # Create User in local database
+            membership_start = datetime.datetime.utcnow()
+            membership_end = membership_start + timedelta(hours=membership_duration_hours)
 
-            # Step 2: Retrieve Instance Settings
-            instance_settings = get_instance_settings(BASE_ADDRESS, access_token, instance_id)
-            issue_code_size = get_issue_code_size(instance_settings)
-
-            # Step 3: Get or Create Badge Type
-            badge_types = get_badge_types(BASE_ADDRESS, access_token, instance_id)
-            badge_type_info = next((bt for bt in badge_types if bt.get("CommonName") == BADGE_TYPE_NAME), None)
-
-            if not badge_type_info:
-                logger.info(f"Badge Type '{BADGE_TYPE_NAME}' does not exist. Creating it now.")
-                badge_type_response = create_badge_type(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
-                if badge_type_response:
-                    badge_type_info = badge_type_response
-                else:
-                    # If Badge Type already exists (status code 409), retrieve its details
-                    badge_type_info = get_badge_type_details(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
-
-            # Step 4: Check if user exists in the database
-            existing_user = User.query.filter_by(email=email).first()
-            if existing_user:
-                logger.info(f"User with email {email} already exists.")
-                return
-
-            # Step 5: Create the user via CRM API and store in local database
-            user = create_user(
-                base_address=BASE_ADDRESS,
-                access_token=access_token,
-                instance_id=instance_id,
+            user = User(
                 first_name=first_name,
                 last_name=last_name,
                 email=email,
                 phone_number=phone_number,
-                badge_type_info=badge_type_info,
-                membership_duration_hours=membership_duration_hours,
-                issue_code_size=issue_code_size
+                membership_start=membership_start,
+                membership_end=membership_end
             )
 
-            # Step 6: Generate Unlock Token and Link
+            db.session.add(user)
+            db.session.commit()
+            logger.info(f"User '{first_name} {last_name}' created successfully with ID: {user.id}")
+
+            # Generate Unlock Token and Link
             unlock_token_str = generate_unlock_token(user.id)
             unlock_link = create_unlock_link(unlock_token_str)
 
-            # Step 7: Send SMS with Unlock Link
+            # Send SMS with Unlock Link
             send_sms(phone_number, unlock_link)
 
     except Exception as e:
@@ -860,20 +380,18 @@ def handle_unlock():
         unlock_token.used = True
         db.session.commit()
 
-    card_number = unlock_token.user.card_number
-    facility_code = unlock_token.user.facility_code
-    issue_code = unlock_token.user.issue_code
+    user = unlock_token.user
 
-    logger.info(f"Simulating unlock for card number: {card_number}, facility code: {facility_code}, issue code: {issue_code}")
+    logger.info(f"Unlocking door for user: {user.first_name} {user.last_name}, Email: {user.email}, Phone: {user.phone_number}")
 
-    # Simulate the card read in a separate thread to avoid blocking
-    threading.Thread(target=simulate_unlock, args=(card_number, facility_code, issue_code)).start()
+    # Unlock the door in a separate thread to avoid blocking
+    threading.Thread(target=unlock_door, args=(user,)).start()
 
     return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
 
-def simulate_unlock(card_number, facility_code, issue_code):
+def unlock_door(user):
     """
-    Simulates the card read to unlock the door.
+    Sends a command to unlock the door for 5 seconds, including user's information in the event data.
     """
     try:
         with app.app_context():
@@ -885,131 +403,104 @@ def simulate_unlock(card_number, facility_code, issue_code):
                 password=KEEP_PASSWORD
             )
 
-            # Step 2: Retrieve required components
-            readers = get_readers(BASE_ADDRESS, access_token, instance_id)
-            if not readers:
-                logger.error("No Readers found.")
-                return
-            reader = readers[0]  # Select the first reader
-
-            card_formats = get_card_formats(BASE_ADDRESS, access_token, instance_id)
-            if not card_formats:
-                logger.error("No Card Formats found.")
+            # Step 2: Retrieve Doors
+            doors = get_doors(BASE_ADDRESS, access_token, instance_id)
+            if not doors:
+                logger.error("No doors found.")
                 return
 
-            # **Modification: Select card format where EncodedCardNumber equals DisplayCardNumber**
-            # Assuming that the card format does not require combining FacilityCode
-            card_format = None
-            for cf in card_formats:
-                # Check if the card format expects EncodedCardNumber without FacilityCode
-                if cf.get('DisplayCardNumber') and cf.get('EncodedCardNumber') == cf.get('DisplayCardNumber'):
-                    card_format = cf
-                    logger.info(f"Selected Card Format: {cf.get('CommonName')}")
-                    break
-            if not card_format:
-                # If no specific format is found, select the first one
-                card_format = card_formats[0]
-                logger.info(f"Selected Default Card Format: {card_format.get('CommonName')}")
+            # Select the door to unlock (modify as needed)
+            door = doors[0]
+            logger.info(f"Selected Door: {door.get('CommonName')}")
 
-            controllers = get_controllers(BASE_ADDRESS, access_token, instance_id)
-            if not controllers:
-                logger.error("No Controllers found.")
-                return
-            controller = controllers[0]  # Select the first controller
-
-            # Step 3: Simulate Card Read
-            success = simulate_card_read(
+            # Step 3: Send Unlock Door Command
+            success = send_unlock_door_command(
                 base_address=BASE_ADDRESS,
                 access_token=access_token,
                 instance_id=instance_id,
-                reader=reader,
-                card_format=card_format,
-                controller=controller,
-                reason=SIMULATION_REASON,
-                facility_code=facility_code,
-                card_number=card_number,
-                issue_code=issue_code
+                door=door,
+                duration_seconds=5,
+                user=user
             )
 
             if success:
-                logger.info("Unlock simulation successful.")
+                logger.info("Door unlock command sent successfully.")
             else:
-                logger.error("Unlock simulation failed.")
+                logger.error("Door unlock command failed.")
 
     except Exception as e:
-        logger.exception(f"Error in simulating unlock: {e}")
+        logger.exception(f"Error in unlocking door: {e}")
 
-@app.route('/test_send_unlock_sms', methods=['GET'])
-def test_send_unlock_sms():
+def send_unlock_door_command(base_address, access_token, instance_id, door, duration_seconds, user):
     """
-    Test route to create a test user and send an unlock link via SMS.
+    Sends a door unlock command to the specified door, including user's information in the event data.
+
+    Returns:
+        bool: True if successful, False otherwise.
     """
+    event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
+
+    # Prepare EventData with user's information
+    event_data = {
+        "Duration": duration_seconds,
+        "UserFirstName": user.first_name,
+        "UserLastName": user.last_name,
+        "UserEmail": user.email,
+        "UserPhone": user.phone_number
+    }
+
+    logger.info(f"Event Data before encoding: {event_data}")
+
+    # Convert EventData to BSON and then to Base64
     try:
-        with app.app_context():
-            # Step 1: Authenticate
-            access_token, instance_id = get_access_token(
-                base_address=BASE_ADDRESS,
-                instance_name=INSTANCE_NAME,
-                username=KEEP_USERNAME,
-                password=KEEP_PASSWORD
-            )
-
-            # Step 2: Retrieve Instance Settings
-            instance_settings = get_instance_settings(BASE_ADDRESS, access_token, instance_id)
-            issue_code_size = get_issue_code_size(instance_settings)
-
-            # Step 3: Get or Create Badge Type
-            badge_types = get_badge_types(BASE_ADDRESS, access_token, instance_id)
-            badge_type_info = next((bt for bt in badge_types if bt.get("CommonName") == BADGE_TYPE_NAME), None)
-
-            if not badge_type_info:
-                logger.info(f"Badge Type '{BADGE_TYPE_NAME}' does not exist. Creating it now.")
-                badge_type_response = create_badge_type(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
-                if badge_type_response:
-                    badge_type_info = badge_type_response
-                else:
-                    # If Badge Type already exists (status code 409), retrieve its details
-                    badge_type_info = get_badge_type_details(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
-
-            # Step 4: Create a Test User
-            first_name = "Test"
-            last_name = "User"
-            email = f"test.user{random.randint(1000,9999)}@example.com"
-            phone_number = "+1234567890"  # Use a valid test number
-            membership_duration_hours = 24  # 24-hour membership for testing
-
-            # Step 5: Create the user via CRM API and store in local database
-            user = create_user(
-                base_address=BASE_ADDRESS,
-                access_token=access_token,
-                instance_id=instance_id,
-                first_name=first_name,
-                last_name=last_name,
-                email=email,
-                phone_number=phone_number,
-                badge_type_info=badge_type_info,
-                membership_duration_hours=membership_duration_hours,
-                issue_code_size=issue_code_size
-            )
-
-            # Step 6: Generate Unlock Token and Link
-            unlock_token_str = generate_unlock_token(user.id)
-            unlock_link = create_unlock_link(unlock_token_str)
-
-            # Step 7: Send SMS with Unlock Link
-            send_sms(phone_number, unlock_link)
-
-        logger.info(f"Test unlock link SMS sent successfully to {phone_number}")
-        return jsonify({
-            'status': 'Test unlock link SMS sent successfully',
-            'email': email,
-            'phone_number': phone_number,
-            'unlock_link': unlock_link
-        }), 200
-
+        event_data_bson = BSON.encode(event_data)
+        event_data_base64 = base64.b64encode(event_data_bson).decode('utf-8')
     except Exception as e:
-        logger.exception(f"Error in test_send_unlock_sms: {e}")
-        return jsonify({'error': 'Failed to send test unlock SMS'}), 500
+        logger.error(f"Error encoding EventData: {e}")
+        return False
+
+    logger.info(f"EventDataBsonBase64: {event_data_base64}")
+
+    # Construct the payload
+    payload = {
+        "$type": "Feenics.Keep.WebApi.Model.EventMessagePosting, Feenics.Keep.WebApi.Model",
+        "OccurredOn": datetime.datetime.now(timezone.utc).isoformat(),
+        "AppKey": "MercuryCommands",
+        "EventTypeMoniker": {
+            "$type": "Feenics.Keep.WebApi.Model.MonikerItem, Feenics.Keep.WebApi.Model",
+            "Namespace": "MercuryServiceCommands",
+            "Nickname": "mercury:command-unlockDoor"
+        },
+        "RelatedObjects": [
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": door['Href'],
+                "LinkedObjectKey": door['Key'],
+                "CommonName": door['CommonName'],
+                "Relation": "Door",
+                "MetaDataBson": None
+            }
+        ],
+        "EventDataBsonBase64": event_data_base64
+    }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = SESSION.post(event_endpoint, headers=headers, json=payload)
+        response.raise_for_status()
+        logger.info("Door unlock event published successfully.")
+        return True
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error during event publishing: {http_err}")
+        logger.error(f"Response Content: {response.text}")
+        return False
+    except Exception as err:
+        logger.error(f"Error during event publishing: {err}")
+        return False
 
 # ----------------------------
 # Main Execution
