@@ -41,7 +41,7 @@ KEEP_PASSWORD = os.getenv("KEEP_PASSWORD")
 BADGE_TYPE_NAME = os.getenv("BADGE_TYPE_NAME", "Employee Badge")
 SIMULATION_REASON = os.getenv("SIMULATION_REASON", "Automated Testing of Card Read")
 FACILITY_CODE = int(os.getenv("FACILITY_CODE", 100))
-ISSUE_CODE = int(os.getenv("ISSUE_CODE", 1))  # Added ISSUE_CODE
+ISSUE_CODE = int(os.getenv("ISSUE_CODE", 1))  # ISSUE_CODE may or may not be required
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
@@ -111,7 +111,6 @@ class User(db.Model):
     phone_number = db.Column(db.String(20), unique=False, nullable=False)
     card_number = db.Column(db.Integer, unique=False, nullable=False)
     facility_code = db.Column(db.Integer, unique=False, nullable=False)
-    issue_code = db.Column(db.Integer, unique=False, nullable=False)  # Added issue_code
     membership_start = db.Column(db.DateTime, nullable=False)
     membership_end = db.Column(db.DateTime, nullable=False)
 
@@ -270,7 +269,7 @@ def generate_card_number():
     Returns:
         int: A 5-digit card number in the range of 1 to 65535.
     """
-    card_number = random.randint(0, 65535)
+    card_number = random.randint(1, 65535)
     return card_number
 
 def get_access_levels(base_address, access_token, instance_id):
@@ -308,7 +307,6 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
 
     card_number = generate_card_number()
     facility_code = FACILITY_CODE  # Use the global facility code
-    issue_code = ISSUE_CODE        # Use the global issue code
 
     # Prepare the current and expiration times
     active_on = datetime.datetime.utcnow().isoformat()
@@ -364,11 +362,17 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "EncodedCardNumber": int(card_number),
                 "DisplayCardNumber": str(card_number),
                 "FacilityCode": int(facility_code),
-                "IssueCode": int(issue_code),  # Added IssueCode
                 "ActiveOn": active_on,
                 "ExpiresOn": expires_on,
                 "AntiPassbackExempt": False,
-                "ExtendedAccess": False
+                "ExtendedAccess": False,
+                "PinExempt": True,  # Ensure PIN is not required
+                "IsDisabled": False,
+                "ManagerLevel": 0,
+                "Note": None,
+                "OriginalUseCount": None,
+                "CurrentUseCount": 0,
+                # "IssueCode": int(ISSUE_CODE),  # Include if necessary
             }
         ],
         "AccessLevelAssignments": access_level_assignments,
@@ -379,7 +383,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "Values": json.dumps({
                     "CardNumber": str(card_number),
                     "FacilityCode": str(facility_code),
-                    "IssueCode": str(issue_code)
+                    # "IssueCode": str(ISSUE_CODE),
                 }),
                 "ShouldPublishUpdateEvents": False
             }
@@ -402,7 +406,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             raise Exception("User ID not found in the response.")
 
         logger.info(f"User '{first_name} {last_name}' created successfully with ID: {user_id}")
-        logger.info(f"Assigned Card Number: {card_number}, Facility Code: {facility_code}, Issue Code: {issue_code}")
+        logger.info(f"Assigned Card Number: {card_number}, Facility Code: {facility_code}")
 
         # Create User in local database
         membership_start = datetime.datetime.utcnow()
@@ -415,7 +419,6 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             phone_number=phone_number,
             card_number=card_number,  # Stored as integer
             facility_code=facility_code,
-            issue_code=issue_code,     # Store issue code
             membership_start=membership_start,
             membership_end=membership_end
         )
@@ -500,7 +503,7 @@ def get_controllers(base_address, access_token, instance_id):
         logger.error(f"Error retrieving controllers: {err}")
         raise
 
-def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number, issue_code):
+def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number):
     """
     Simulates a card read by publishing a simulateCardRead event.
 
@@ -513,9 +516,8 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     try:
         card_number_int = int(card_number)
         facility_code_int = int(facility_code)
-        issue_code_int = int(issue_code)
     except ValueError as e:
-        logger.error(f"Invalid card number, facility code, or issue code: {e}")
+        logger.error(f"Invalid card number or facility code: {e}")
         return False
 
     # Construct EventData as a dictionary with correct data types
@@ -523,7 +525,7 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         "Reason": reason,
         "FacilityCode": facility_code_int,
         "EncodedCardNumber": card_number_int,
-        "IssueCode": issue_code_int  # Added IssueCode
+        # "IssueCode": int(ISSUE_CODE),  # Include if necessary
     }
 
     logger.info(f"Event Data before encoding: {event_data}")
@@ -790,16 +792,15 @@ def handle_unlock():
 
     card_number = unlock_token.user.card_number
     facility_code = unlock_token.user.facility_code
-    issue_code = unlock_token.user.issue_code
 
-    logger.info(f"Simulating unlock for card number: {card_number}, facility code: {facility_code}, issue code: {issue_code}")
+    logger.info(f"Simulating unlock for card number: {card_number}, facility code: {facility_code}")
 
     # Simulate the card read in a separate thread to avoid blocking
-    threading.Thread(target=simulate_unlock, args=(card_number, facility_code, issue_code)).start()
+    threading.Thread(target=simulate_unlock, args=(card_number, facility_code)).start()
 
     return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
 
-def simulate_unlock(card_number, facility_code, issue_code):
+def simulate_unlock(card_number, facility_code):
     """
     Simulates the card read to unlock the door.
     """
@@ -842,8 +843,7 @@ def simulate_unlock(card_number, facility_code, issue_code):
                 controller=controller,
                 reason=SIMULATION_REASON,
                 facility_code=facility_code,
-                card_number=card_number,
-                issue_code=issue_code
+                card_number=card_number
             )
 
             if success:
