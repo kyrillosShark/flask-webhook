@@ -281,7 +281,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
     card_number = generate_card_number()
-    facility_code = 200  # Use the global facility code
+    facility_code = 100  # Use the global facility code
 
     # Prepare the current and expiration times
     active_on = datetime.datetime.utcnow().isoformat()
