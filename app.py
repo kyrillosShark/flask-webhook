@@ -7,9 +7,8 @@ import logging
 import threading
 import datetime
 from datetime import timezone, timedelta
-import random
 import re
-from flask import Flask, request, jsonify, abort, render_template
+from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
@@ -19,7 +18,10 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from bson import BSON  # Comes from the pymongo package
+# Ensure `bson` is installed. If not, install it using `pip install bson`
+import bson
+from bson import BSON
+
 from dotenv import load_dotenv
 
 from flask_limiter import Limiter
@@ -387,7 +389,7 @@ def is_valid_email(email):
     """
     Validates the email format.
     """
-    regex = r'^\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,4}\b'
+    regex = r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
     return re.match(regex, email)
 
 def is_valid_phone(phone):
@@ -418,6 +420,10 @@ def validate_unlock_token(token):
 # ----------------------------
 # Flask Routes
 # ----------------------------
+
+@app.route('/')
+def index():
+    return "Flask app is running!"
 
 @app.route('/generate_token', methods=['POST'])
 @limiter.limit("5 per minute")  # Adjust rate limit as needed
