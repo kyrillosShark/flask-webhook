@@ -340,7 +340,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
     card_number = generate_card_number()
-    facility_code = FACILITY_CODE
+    facility_code = 100
 
     # Generate IssueCode if required
     if issue_code_size > 0:
