@@ -7,3 +7,4 @@ twilio
 requests
 python-dotenv
 pymongo
+psycopg2
