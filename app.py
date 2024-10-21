@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, abort, copy_current_app_context
+from flask import Flask, request, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 import os
@@ -572,7 +572,6 @@ def send_sms(phone_number, unlock_link):
 # User Creation and Messaging Workflow
 # ----------------------------
 
-@copy_current_app_context
 def process_user_creation(first_name, last_name, email, phone_number, membership_duration_hours=24):
     """
     Complete workflow to create a user in CRM, store membership info, generate unlock link, and send an SMS.
@@ -602,7 +601,6 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
 
             # Step 3: Check if user exists in the database
             existing_user = User.query.filter_by(email=email).first()
-
             if existing_user:
                 logger.info(f"User with email {email} already exists.")
                 return
@@ -712,7 +710,6 @@ def handle_unlock():
 
     unlock_token = result
 
-    # Mark the token as used
     with app.app_context():
         unlock_token.used = True
         db.session.commit()
@@ -724,56 +721,56 @@ def handle_unlock():
 
     return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
 
-@copy_current_app_context
 def simulate_unlock(card_number):
     """
     Simulates the card read to unlock the door.
     """
     try:
-        # Authenticate
-        access_token, instance_id = get_access_token(
-            base_address=BASE_ADDRESS,
-            instance_name=INSTANCE_NAME,
-            username=KEEP_USERNAME,
-            password=KEEP_PASSWORD
-        )
+        with app.app_context():
+            # Authenticate
+            access_token, instance_id = get_access_token(
+                base_address=BASE_ADDRESS,
+                instance_name=INSTANCE_NAME,
+                username=KEEP_USERNAME,
+                password=KEEP_PASSWORD
+            )
 
-        # Retrieve required components
-        readers = get_readers(BASE_ADDRESS, access_token, instance_id)
-        if not readers:
-            logger.error("No Readers found.")
-            return
-        reader = readers[0]  # Select the first reader
+            # Retrieve required components
+            readers = get_readers(BASE_ADDRESS, access_token, instance_id)
+            if not readers:
+                logger.error("No Readers found.")
+                return
+            reader = readers[0]  # Select the first reader
 
-        card_formats = get_card_formats(BASE_ADDRESS, access_token, instance_id)
-        if not card_formats:
-            logger.error("No Card Formats found.")
-            return
-        card_format = card_formats[0]  # Select the first card format
+            card_formats = get_card_formats(BASE_ADDRESS, access_token, instance_id)
+            if not card_formats:
+                logger.error("No Card Formats found.")
+                return
+            card_format = card_formats[0]  # Select the first card format
 
-        controllers = get_controllers(BASE_ADDRESS, access_token, instance_id)
-        if not controllers:
-            logger.error("No Controllers found.")
-            return
-        controller = controllers[0]  # Select the first controller
+            controllers = get_controllers(BASE_ADDRESS, access_token, instance_id)
+            if not controllers:
+                logger.error("No Controllers found.")
+                return
+            controller = controllers[0]  # Select the first controller
 
-        # Simulate Card Read
-        success = simulate_card_read(
-            base_address=BASE_ADDRESS,
-            access_token=access_token,
-            instance_id=instance_id,
-            reader=reader,
-            card_format=card_format,
-            controller=controller,
-            reason=SIMULATION_REASON,
-            facility_code=FACILITY_CODE,
-            card_number=card_number
-        )
+            # Simulate Card Read
+            success = simulate_card_read(
+                base_address=BASE_ADDRESS,
+                access_token=access_token,
+                instance_id=instance_id,
+                reader=reader,
+                card_format=card_format,
+                controller=controller,
+                reason=SIMULATION_REASON,
+                facility_code=FACILITY_CODE,
+                card_number=card_number
+            )
 
-        if success:
-            logger.info("Unlock simulation successful.")
-        else:
-            logger.error("Unlock simulation failed.")
+            if success:
+                logger.info("Unlock simulation successful.")
+            else:
+                logger.error("Unlock simulation failed.")
 
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
