@@ -108,8 +108,8 @@ class User(db.Model):
     last_name = db.Column(db.String(50), nullable=False)
     email = db.Column(db.String(120), unique=False, nullable=False)
     phone_number = db.Column(db.String(20), unique=False, nullable=False)
-    card_number = db.Column(db.Integer, unique=False, nullable=False)  # Changed to Integer
-    facility_code = db.Column(db.Integer, unique=False, nullable=False)  # Added facility_code
+    card_number = db.Column(db.Integer, unique=False, nullable=False)
+    facility_code = db.Column(db.Integer, unique=False, nullable=False)
     membership_start = db.Column(db.DateTime, nullable=False)
     membership_end = db.Column(db.DateTime, nullable=False)
 
@@ -263,17 +263,41 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
 
 def generate_card_number():
     """
-    Generates a random 5-digit card number for 26-bit HID format.
+    Generates a random 5-digit number, ensuring it's a valid 26-bit HID format.
 
     Returns:
-        int: A 5-digit card number in the range of 1 to 65535.
+        int: A 5-digit card number in the range of 10000 to 99999.
     """
     card_number = random.randint(10000, 99999)
     return card_number
 
+def get_access_levels(base_address, access_token, instance_id):
+    """
+    Retrieves a list of all available Access Levels.
+
+    Returns:
+        list: List of access level objects.
+    """
+    access_levels_endpoint = f"{base_address}/api/f/{instance_id}/accesslevels"
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = SESSION.get(access_levels_endpoint, headers=headers)
+        response.raise_for_status()
+        access_levels = response.json()
+        logger.info(f"Retrieved {len(access_levels)} access levels.")
+        return access_levels
+    except Exception as err:
+        logger.error(f"Error retrieving access levels: {err}")
+        raise
+
 def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours):
     """
-    Creates a new user in the Keep by Feenics system.
+    Creates a new user in the Keep by Feenics system with access to all access levels.
 
     Returns:
         User: The created User object.
@@ -281,11 +305,28 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
     card_number = generate_card_number()
-    facility_code = 111  # Use the global facility code
+    facility_code = FACILITY_CODE  # Use the global facility code
 
     # Prepare the current and expiration times
     active_on = datetime.datetime.utcnow().isoformat()
     expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat()
+
+    # Retrieve all access levels
+    access_levels = get_access_levels(base_address, access_token, instance_id)
+    if not access_levels:
+        logger.error("No access levels found.")
+        raise Exception("No access levels available to assign to the user.")
+
+    # Prepare Access Level Assignments
+    access_level_assignments = []
+    for al in access_levels:
+        assignment = {
+            "$type": "Feenics.Keep.WebApi.Model.AccessLevelAssignmentInfo, Feenics.Keep.WebApi.Model",
+            "AccessLevelKey": al.get("Key"),
+            "ActiveOn": active_on,
+            "ExpiresOn": expires_on
+        }
+        access_level_assignments.append(assignment)
 
     user_data = {
         "$type": "Feenics.Keep.WebApi.Model.PersonInfo, Feenics.Keep.WebApi.Model",
@@ -319,13 +360,14 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
                 "EncodedCardNumber": int(card_number),
                 "DisplayCardNumber": str(card_number),
-                "FacilityCode": int(facility_code),  # Added FacilityCode
+                "FacilityCode": int(facility_code),
                 "ActiveOn": active_on,
                 "ExpiresOn": expires_on,
                 "AntiPassbackExempt": False,
                 "ExtendedAccess": False
             }
         ],
+        "AccessLevelAssignments": access_level_assignments,
         "Metadata": [
             {
                 "$type": "Feenics.Keep.WebApi.Model.MetadataItem, Feenics.Keep.WebApi.Model",
@@ -461,26 +503,28 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     """
     event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
 
-    # Convert card_number to hexadecimal string (ensure 26-bit HID format)
-    encoded_card_number_hex = format(int(card_number), 'x')
-
-    # Ensure facility_code is an integer and convert it to a string for BSON encoding
+    # Ensure card_number and facility_code are integers
     try:
-        facility_code = int(facility_code)
-    except ValueError:
-        logger.error(f"Invalid facility code: {facility_code}. Must be an integer.")
+        card_number_int = int(card_number)
+        facility_code_int = int(facility_code)
+    except ValueError as e:
+        logger.error(f"Invalid card number or facility code: {e}")
         return False
 
-    # Construct EventData as a dictionary
+    # Construct EventData as a dictionary with correct data types
     event_data = {
         "Reason": reason,
-        "FacilityCode": str(facility_code),  # Convert facility code to string
-        "EncodedCardNumber": encoded_card_number_hex
+        "FacilityCode": facility_code_int,
+        "EncodedCardNumber": card_number_int
     }
+
+    logger.info(f"Event Data before encoding: {event_data}")
 
     # Convert EventData to BSON and then to Base64
     event_data_bson = BSON.encode(event_data)
     event_data_base64 = base64.b64encode(event_data_bson).decode('utf-8')
+
+    logger.info(f"EventDataBsonBase64: {event_data_base64}")
 
     # Construct the payload
     payload = {
@@ -531,6 +575,10 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         response.raise_for_status()
         logger.info("Card read simulation event published successfully.")
         return True
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error during event publishing: {http_err}")
+        logger.error(f"Response Content: {response.text}")
+        return False
     except Exception as err:
         logger.error(f"Error during event publishing: {err}")
         return False
@@ -581,12 +629,10 @@ def send_sms(phone_number, unlock_link):
         logger.info(f"SMS sent to {phone_number}. SID: {message.sid}, Status: {message.status}")
     except Exception as e:
         logger.error(f"Failed to send SMS to {phone_number}: {e}")
-        # If the exception is a TwilioRestException, it contains more details
         if hasattr(e, 'code'):
             logger.error(f"Twilio Error Code: {e.code}")
         if hasattr(e, 'msg'):
             logger.error(f"Twilio Error Message: {e.msg}")
-
 
 # ----------------------------
 # User Creation and Messaging Workflow
