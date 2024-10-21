@@ -8,6 +8,7 @@ import threading
 import datetime
 from datetime import timezone, timedelta
 import random
+import re
 from flask import Flask, request, jsonify, abort, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -20,6 +21,9 @@ from urllib3.util.retry import Retry
 
 from bson import BSON  # From pymongo
 from dotenv import load_dotenv
+
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 load_dotenv()
 
@@ -45,12 +49,13 @@ TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 UNLOCK_LINK_BASE_URL = os.getenv("UNLOCK_LINK_BASE_URL")
 DATABASE_URL = os.getenv("DATABASE_URL")
+API_KEY = os.getenv("API_KEY")  # For securing the /generate_token endpoint
 
 # Check for required environment variables
 required_env_vars = [
     'BASE_ADDRESS', 'INSTANCE_NAME', 'KEEP_USERNAME', 'KEEP_PASSWORD',
     'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_PHONE_NUMBER',
-    'UNLOCK_LINK_BASE_URL', 'DATABASE_URL'
+    'UNLOCK_LINK_BASE_URL', 'DATABASE_URL', 'API_KEY'
 ]
 
 loaded_vars = {
@@ -62,7 +67,8 @@ loaded_vars = {
     'TWILIO_AUTH_TOKEN': TWILIO_AUTH_TOKEN,
     'TWILIO_PHONE_NUMBER': TWILIO_PHONE_NUMBER,
     'UNLOCK_LINK_BASE_URL': UNLOCK_LINK_BASE_URL,
-    'DATABASE_URL': DATABASE_URL
+    'DATABASE_URL': DATABASE_URL,
+    'API_KEY': API_KEY
 }
 
 missing_env_vars = [var for var, value in loaded_vars.items() if not value]
@@ -97,6 +103,13 @@ def create_session():
     return session
 
 SESSION = create_session()
+
+# Initialize Limiter
+limiter = Limiter(
+    app,
+    key_func=get_remote_address,
+    default_limits=["100 per day", "10 per hour"]
+)
 
 # ----------------------------
 # Database Models
@@ -240,10 +253,11 @@ def send_sms(phone_number, unlock_link):
     """
     Sends an SMS message with the unlock link to the specified phone number.
     """
-    message_body = f"Your unlock link: {unlock_link}\nThis link is valid for 24 hours."
+    message_body = f"Welcome! Use this link to unlock the door: {unlock_link}\nClick the 'Unlock' button on the page. This link is valid for 24 hours."
 
     try:
         logger.info(f"Attempting to send SMS to {phone_number}")
+        logger.info(f"Unlock link sent: {unlock_link}")  # Log the URL
         message = client.messages.create(
             body=message_body,
             from_=TWILIO_PHONE_NUMBER,
@@ -370,94 +384,40 @@ def send_unlock_door_command(base_address, access_token, instance_id, door, dura
         logger.error(f"Error during event publishing: {err}")
         return False
 
-# ----------------------------
-# User Creation and Messaging Workflow
-# ----------------------------
-
-def process_user_creation(first_name, last_name, email, phone_number, membership_duration_hours=24):
+def is_valid_email(email):
     """
-    Complete workflow to create a user in the local database, generate unlock link, and send an SMS.
+    Validates the email format.
     """
-    try:
-        with app.app_context():
-            # Create User in local database
-            membership_start = datetime.datetime.utcnow()
-            membership_end = membership_start + timedelta(hours=membership_duration_hours)
+    regex = r'^\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,4}\b'
+    return re.match(regex, email)
 
-            user = User(
-                first_name=first_name,
-                last_name=last_name,
-                email=email,
-                phone_number=phone_number,
-                membership_start=membership_start,
-                membership_end=membership_end
-            )
-
-            db.session.add(user)
-            db.session.commit()
-            logger.info(f"User '{first_name} {last_name}' created successfully with ID: {user.id}")
-
-            # Generate Unlock Token and Link
-            unlock_token_str = generate_unlock_token(user.id)
-            if not unlock_token_str:
-                logger.error("Failed to generate unlock token.")
-                return
-
-            unlock_link = create_unlock_link(unlock_token_str)
-
-            # **Log the Unlock URL for Testing**
-            logger.info(f"Unlock URL for testing: {unlock_link}")
-
-            # Send SMS with Unlock Link
-            send_sms(phone_number, unlock_link)
-
-    except Exception as e:
-        logger.exception(f"Error in processing user creation: {e}")
-
-# ----------------------------
-# Unlock Token Management
-# ----------------------------
-
-def validate_unlock_token(token):
+def is_valid_phone(phone):
     """
-    Validates the unlock token.
+    Validates the phone number format (simple validation).
     """
-    with app.app_context():
-        unlock_token = UnlockToken.query.filter_by(token=token).first()
-
-        if not unlock_token:
-            return False, "Invalid token."
-
-        if datetime.datetime.utcnow() >= unlock_token.expires_at:
-            return False, "Token has expired."
-
-        if not unlock_token.user.is_membership_active():
-            return False, "Membership is no longer active."
-
-        return True, unlock_token
+    regex = r'^\+\d{10,15}$'
+    return re.match(regex, phone)
 
 # ----------------------------
 # Flask Routes
 # ----------------------------
 
-@app.route('/reset_database', methods=['POST'])
-def reset_database():
-    if not app.config['DEBUG']:
-        abort(403, description="Forbidden")
-
-    try:
-        db.drop_all()
-        db.create_all()
-        logger.info("Database reset successfully.")
-        return jsonify({'status': 'Database reset successfully'}), 200
-    except Exception as e:
-        logger.exception(f"Error resetting database: {e}")
-        return jsonify({'error': 'Failed to reset database'}), 500
-
-@app.route('/webhook', methods=['POST'])
-def handle_webhook():
+@app.route('/generate_token', methods=['POST'])
+@limiter.limit("5 per minute")  # Adjust rate limit as needed
+def generate_token():
+    """
+    Endpoint to generate a temporary unlock token for a user.
+    Expects JSON data with first_name, last_name, email, and phone.
+    Returns the generated token in JSON response.
+    """
     data = request.json
-    logger.info(f"Received webhook data: {data}")
+    logger.info(f"Received token generation request: {data}")
+
+    # Verify API Key
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or auth_header != f"Bearer {API_KEY}":
+        logger.warning("Unauthorized token generation attempt.")
+        return jsonify({'error': 'Unauthorized'}), 401
 
     # Extract fields from the data
     first_name = data.get('first_name')
@@ -465,18 +425,66 @@ def handle_webhook():
     email = data.get('email')
     phone_number = data.get('phone')
 
-    # Check for required fields
+    # Validate required fields
     if not all([first_name, last_name, email, phone_number]):
-        logger.warning("Missing required fields.")
-        return jsonify({'error': 'Missing required fields.'}), 400
+        logger.warning("Missing required fields for token generation.")
+        return jsonify({'error': 'Missing required fields: first_name, last_name, email, phone'}), 400
 
-    logger.info(f"Processing user: {first_name} {last_name}, Email: {email}, Phone: {phone_number}")
+    # Validate email and phone format
+    if not is_valid_email(email):
+        logger.warning("Invalid email format.")
+        return jsonify({'error': 'Invalid email format.'}), 400
 
-    # Process user creation in a separate thread to avoid blocking
-    threading.Thread(target=process_user_creation, args=(
-        first_name, last_name, email, phone_number)).start()
+    if not is_valid_phone(phone_number):
+        logger.warning("Invalid phone number format.")
+        return jsonify({'error': 'Invalid phone number format. Use + followed by country code and number.'}), 400
 
-    return jsonify({'status': 'User creation in progress'}), 200
+    try:
+        with app.app_context():
+            # Check if user already exists
+            user = User.query.filter_by(email=email).first()
+            if not user:
+                # Create a new user if not exists
+                membership_start = datetime.datetime.utcnow()
+                membership_end = membership_start + timedelta(hours=24)  # 24-hour validity
+
+                user = User(
+                    first_name=first_name,
+                    last_name=last_name,
+                    email=email,
+                    phone_number=phone_number,
+                    membership_start=membership_start,
+                    membership_end=membership_end
+                )
+                db.session.add(user)
+                db.session.commit()
+                logger.info(f"Created new user '{first_name} {last_name}' with ID: {user.id}")
+            else:
+                # Update membership_end if necessary
+                new_end = datetime.datetime.utcnow() + timedelta(hours=24)
+                if user.membership_end < new_end:
+                    user.membership_end = new_end
+                    db.session.commit()
+                    logger.info(f"Extended membership for existing user '{user.email}'")
+
+            # Generate Unlock Token and Link
+            unlock_token_str = generate_unlock_token(user.id)
+            if not unlock_token_str:
+                logger.error("Failed to generate unlock token.")
+                return jsonify({'error': 'Failed to generate unlock token.'}), 500
+
+            # Create the unlock link
+            unlock_link = create_unlock_link(unlock_token_str)
+
+            # Send SMS with Unlock Link
+            send_sms(phone_number, unlock_link)
+
+            # Return the token in the response (optional)
+            return jsonify({'token': unlock_token_str}), 200
+
+    except Exception as e:
+        logger.exception(f"Error in generating token: {e}")
+        return jsonify({'error': 'Internal server error.'}), 500
 
 @app.route('/unlock', methods=['GET', 'POST'])
 def handle_unlock():
@@ -522,63 +530,6 @@ def handle_unlock():
 
         # Render a success page or message
         return render_template('unlock.html', message='Door is unlocking for 3 seconds. Please wait...')
-
-@app.route('/test_send_unlock_sms', methods=['GET'])
-def test_send_unlock_sms():
-    """
-    Test route to create a test user and send an unlock link via SMS.
-    """
-    try:
-        with app.app_context():
-            # Step 1: Create a Test User
-            first_name = "Test"
-            last_name = "User"
-            email = f"test.user{random.randint(1000,9999)}@example.com"
-            phone_number = "+1234567890"  # Use a valid test number
-            membership_duration_hours = 24  # 24-hour membership for testing
-
-            # Step 2: Create the user in the local database
-            membership_start = datetime.datetime.utcnow()
-            membership_end = membership_start + timedelta(hours=membership_duration_hours)
-
-            user = User(
-                first_name=first_name,
-                last_name=last_name,
-                email=email,
-                phone_number=phone_number,
-                membership_start=membership_start,
-                membership_end=membership_end
-            )
-
-            db.session.add(user)
-            db.session.commit()
-            logger.info(f"Test User '{first_name} {last_name}' created successfully with ID: {user.id}")
-
-            # Step 3: Generate Unlock Token and Link
-            unlock_token_str = generate_unlock_token(user.id)
-            if not unlock_token_str:
-                logger.error("Failed to generate unlock token.")
-                return jsonify({'error': 'Failed to generate unlock token.'}), 500
-
-            unlock_link = create_unlock_link(unlock_token_str)
-
-            # **Log the Unlock URL for Testing**
-            logger.info(f"Unlock URL for testing: {unlock_link}")
-
-            # Step 4: Send SMS with Unlock Link
-            send_sms(phone_number, unlock_link)
-
-        logger.info(f"Test unlock link SMS sent successfully to {phone_number}")
-        return jsonify({
-            'status': 'Test unlock link SMS sent successfully',
-            'email': email,
-            'phone_number': phone_number,
-            'unlock_link': unlock_link
-        }), 200
-
-    except Exception as e:
-        logger.exception(f"Error in test_send_unlock_sms: {e}")
-        return jsonify({'error': 'Failed to send test unlock SMS'}), 500
 
 # ----------------------------
 # Main Execution
