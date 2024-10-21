@@ -341,11 +341,11 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     facility_code = FACILITY_CODE
 
     # Generate IssueCode if required
-    if issue_code_size > 0:
-        max_issue_code = (1 << (issue_code_size * 8)) - 1  # Calculate max value based on size in bytes
-        issue_code = random.randint(1, max_issue_code)
-    else:
-        issue_code = None  # IssueCode not required
+   # if issue_code_size > 0:
+    #max_issue_code = (1 << (issue_code_size * 8)) - 1  # Calculate max value based on size in bytes
+    #issue_code = random.randint(1, max_issue_code)
+    #else:
+    issue_code = None  # IssueCode not required
 
     # Prepare the current and expiration times
     active_on = datetime.datetime.utcnow().isoformat()
