@@ -117,17 +117,16 @@ class User(db.Model):
 
 class UnlockToken(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    token = db.Column(db.String(36), unique=False, nullable=False)
+    token = db.Column(db.String(36), unique=True, nullable=False)  # Ensure tokens are unique
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     expires_at = db.Column(db.DateTime, nullable=False)
-    used = db.Column(db.Boolean, default=False)
 
     user = db.relationship('User', backref=db.backref('unlock_tokens', lazy=True))
 
     def is_valid(self):
         now = datetime.datetime.utcnow()
-        return not self.used and now < self.expires_at and self.user.is_membership_active()
+        return now < self.expires_at and self.user.is_membership_active()
 
 # ----------------------------
 # Helper Functions
@@ -209,7 +208,7 @@ def generate_unlock_token(user_id):
     Generates a unique unlock token for the user and saves it to the database.
     """
     token_str = str(uuid.uuid4())
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)  # Token valid for 15 minutes
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(hours=24)  # Token valid for 24 hours
 
     with app.app_context():
         user = User.query.get(user_id)
@@ -225,7 +224,6 @@ def generate_unlock_token(user_id):
         db.session.add(unlock_token)
         db.session.commit()
 
-        # Move the logging inside the app context
         logger.info(f"Generated unlock token for user {user.id}: {token_str}")
 
     return token_str
@@ -234,7 +232,7 @@ def create_unlock_link(token):
     """
     Creates an unlock link using the provided token.
     """
-    unlock_link = f"{UNLOCK_LINK_BASE_URL}?token={token}"
+    unlock_link = f"{UNLOCK_LINK_BASE_URL}/unlock?token={token}"
     logger.info(f"Created unlock link: {unlock_link}")
     return unlock_link
 
@@ -242,7 +240,7 @@ def send_sms(phone_number, unlock_link):
     """
     Sends an SMS message with the unlock link to the specified phone number.
     """
-    message_body = f"Your unlock link: {unlock_link}"
+    message_body = f"Your unlock link: {unlock_link}\nThis link is valid for 24 hours."
 
     try:
         logger.info(f"Attempting to send SMS to {phone_number}")
@@ -259,7 +257,7 @@ def send_sms(phone_number, unlock_link):
         if hasattr(e, 'msg'):
             logger.error(f"Twilio Error Message: {e.msg}")
 
-def unlock_door(user, duration_seconds=5):
+def unlock_door(user, duration_seconds=3):
     """
     Sends a command to unlock the door for duration_seconds seconds, including user's information in the event data.
     """
@@ -401,6 +399,10 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
 
             # Generate Unlock Token and Link
             unlock_token_str = generate_unlock_token(user.id)
+            if not unlock_token_str:
+                logger.error("Failed to generate unlock token.")
+                return
+
             unlock_link = create_unlock_link(unlock_token_str)
 
             # **Log the Unlock URL for Testing**
@@ -425,9 +427,6 @@ def validate_unlock_token(token):
 
         if not unlock_token:
             return False, "Invalid token."
-
-        if unlock_token.used:
-            return False, "Token has already been used."
 
         if datetime.datetime.utcnow() >= unlock_token.expires_at:
             return False, "Token has expired."
@@ -514,11 +513,6 @@ def handle_unlock():
 
         unlock_token = result
 
-        # Mark the token as used
-        with app.app_context():
-            unlock_token.used = True
-            db.session.commit()
-
         user = unlock_token.user
 
         logger.info(f"Unlocking door for user: {user.first_name} {user.last_name}, Email: {user.email}, Phone: {user.phone_number}")
@@ -562,6 +556,10 @@ def test_send_unlock_sms():
 
             # Step 3: Generate Unlock Token and Link
             unlock_token_str = generate_unlock_token(user.id)
+            if not unlock_token_str:
+                logger.error("Failed to generate unlock token.")
+                return jsonify({'error': 'Failed to generate unlock token.'}), 500
+
             unlock_link = create_unlock_link(unlock_token_str)
 
             # **Log the Unlock URL for Testing**
@@ -588,4 +586,5 @@ def test_send_unlock_sms():
 
 if __name__ == "__main__":
     # Run the Flask app
-    app.run(host='0.0.0.0', port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
