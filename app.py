@@ -270,7 +270,7 @@ def generate_card_number():
     Returns:
         int: A 5-digit card number in the range of 1 to 65535.
     """
-    card_number = random.randint(1, 65535)
+    card_number = random.randint(0, 65535)
     return card_number
 
 def get_access_levels(base_address, access_token, instance_id):
