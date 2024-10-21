@@ -19,7 +19,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from bson import BSON  # From pymongo
+from bson import BSON  # Comes from the pymongo package
 from dotenv import load_dotenv
 
 from flask_limiter import Limiter
@@ -74,10 +74,10 @@ if missing_env_vars:
     logger.error(f"Missing environment variables: {', '.join(missing_env_vars)}")
     sys.exit(1)
 
-# Database Configuration
+# Database Configuration using DATABASE_URL
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_EXPIRE_ON_COMMIT'] = False
+app.config['SQLALCHEMY_EXPIRE_ON_COMMIT'] = False  # Prevents DetachedInstanceError
 db = SQLAlchemy(app)
 
 # Initialize Flask-Migrate
@@ -113,13 +113,306 @@ limiter = Limiter(
 # Database Models
 # ----------------------------
 
-# [Your database models remain unchanged]
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    first_name = db.Column(db.String(50), nullable=False)
+    last_name = db.Column(db.String(50), nullable=False)
+    email = db.Column(db.String(120), unique=False, nullable=False)
+    phone_number = db.Column(db.String(20), unique=False, nullable=False)
+    membership_start = db.Column(db.DateTime, nullable=False)
+    membership_end = db.Column(db.DateTime, nullable=False)
+
+    def is_membership_active(self):
+        now = datetime.datetime.utcnow()
+        return self.membership_start <= now <= self.membership_end
+
+class UnlockToken(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    token = db.Column(db.String(36), unique=True, nullable=False)  # Ensure tokens are unique
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    expires_at = db.Column(db.DateTime, nullable=False)
+
+    user = db.relationship('User', backref=db.backref('unlock_tokens', lazy=True))
+
+    def is_valid(self):
+        now = datetime.datetime.utcnow()
+        return now < self.expires_at and self.user.is_membership_active()
 
 # ----------------------------
 # Helper Functions
 # ----------------------------
 
-# [Your helper functions remain unchanged]
+def get_access_token(base_address, instance_name, username, password):
+    """
+    Authenticates with the Keep by Feenics API and retrieves an access token.
+
+    Returns:
+        tuple: (access_token, instance_id)
+    """
+    token_endpoint = f"{base_address}/token"
+
+    payload = {
+        "grant_type": "password",
+        "client_id": "consoleApp",
+        "client_secret": "consoleSecret",
+        "username": username,
+        "password": password,
+        "instance": instance_name,
+        "sendonetimepassword": "false",
+        "undefined": ""
+    }
+
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+
+    body_encoded = "&".join([f"{key}={value}" for key, value in payload.items()])
+
+    try:
+        response = SESSION.post(token_endpoint, headers=headers, data=body_encoded)
+        response.raise_for_status()
+
+        response_data = response.json()
+        access_token = response_data.get("access_token")
+        instance_id = response_data.get("instance")
+
+        if not access_token or not instance_id:
+            raise Exception("Access token or instance ID not found in the response.")
+
+        logger.info("CRM login successful.")
+        return access_token, instance_id
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error during CRM login: {http_err}")
+        logger.error(f"Response Content: {response.text}")
+        raise
+    except Exception as err:
+        logger.error(f"Error during CRM login: {err}")
+        raise
+
+def get_doors(base_address, access_token, instance_id):
+    """
+    Retrieves a list of available Doors.
+
+    Returns:
+        list: List of door objects.
+    """
+    doors_endpoint = f"{base_address}/api/f/{instance_id}/doors"
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = SESSION.get(doors_endpoint, headers=headers)
+        response.raise_for_status()
+        doors = response.json()
+        logger.info(f"Retrieved {len(doors)} doors.")
+        return doors
+    except Exception as err:
+        logger.error(f"Error retrieving doors: {err}")
+        raise
+
+def generate_unlock_token(user_id):
+    """
+    Generates a unique unlock token for the user and saves it to the database.
+    """
+    token_str = str(uuid.uuid4())
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(hours=24)  # Token valid for 24 hours
+
+    with app.app_context():
+        user = User.query.get(user_id)
+        if not user:
+            logger.error(f"User with ID {user_id} not found.")
+            return None
+
+        unlock_token = UnlockToken(
+            token=token_str,
+            user_id=user.id,
+            expires_at=expires_at
+        )
+        db.session.add(unlock_token)
+        db.session.commit()
+
+        logger.info(f"Generated unlock token for user {user.id}: {token_str}")
+
+    return token_str
+
+def create_unlock_link(token):
+    """
+    Creates an unlock link using the provided token.
+    """
+    unlock_link = f"{UNLOCK_LINK_BASE_URL}/unlock?token={token}"
+    logger.info(f"Created unlock link: {unlock_link}")
+    return unlock_link
+
+def send_sms(phone_number, unlock_link):
+    """
+    Sends an SMS message with the unlock link to the specified phone number.
+    """
+    message_body = f"Welcome! Use this link to unlock the door: {unlock_link}\nClick the 'Unlock' button on the page. This link is valid for 24 hours."
+
+    try:
+        logger.info(f"Attempting to send SMS to {phone_number}")
+        logger.info(f"Unlock link sent: {unlock_link}")  # Log the URL
+        message = client.messages.create(
+            body=message_body,
+            from_=TWILIO_PHONE_NUMBER,
+            to=phone_number
+        )
+        logger.info(f"SMS sent to {phone_number}. SID: {message.sid}, Status: {message.status}")
+    except Exception as e:
+        logger.error(f"Failed to send SMS to {phone_number}: {e}")
+        if hasattr(e, 'code'):
+            logger.error(f"Twilio Error Code: {e.code}")
+        if hasattr(e, 'msg'):
+            logger.error(f"Twilio Error Message: {e.msg}")
+
+def unlock_door(user, duration_seconds=3):
+    """
+    Sends a command to unlock the door for duration_seconds seconds, including user's information in the event data.
+    """
+    try:
+        with app.app_context():
+            # Step 1: Authenticate
+            access_token, instance_id = get_access_token(
+                base_address=BASE_ADDRESS,
+                instance_name=INSTANCE_NAME,
+                username=KEEP_USERNAME,
+                password=KEEP_PASSWORD
+            )
+
+            # Step 2: Retrieve Doors
+            doors = get_doors(BASE_ADDRESS, access_token, instance_id)
+            if not doors:
+                logger.error("No doors found.")
+                return
+
+            # Select the door to unlock (modify as needed)
+            door = doors[0]
+            logger.info(f"Selected Door: {door.get('CommonName')}")
+
+            # Step 3: Send Unlock Door Command
+            success = send_unlock_door_command(
+                base_address=BASE_ADDRESS,
+                access_token=access_token,
+                instance_id=instance_id,
+                door=door,
+                duration_seconds=duration_seconds,
+                user=user
+            )
+
+            if success:
+                logger.info("Door unlock command sent successfully.")
+            else:
+                logger.error("Door unlock command failed.")
+
+    except Exception as e:
+        logger.exception(f"Error in unlocking door: {e}")
+
+def send_unlock_door_command(base_address, access_token, instance_id, door, duration_seconds, user):
+    """
+    Sends a door unlock command to the specified door, including user's information in the event data.
+
+    Returns:
+        bool: True if successful, False otherwise.
+    """
+    event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
+
+    # Prepare EventData with user's information
+    event_data = {
+        "Duration": duration_seconds,
+        "UserFirstName": user.first_name,
+        "UserLastName": user.last_name,
+        "UserEmail": user.email,
+        "UserPhone": user.phone_number
+    }
+
+    logger.info(f"Event Data before encoding: {event_data}")
+
+    # Convert EventData to BSON and then to Base64
+    try:
+        event_data_bson = BSON.encode(event_data)
+        event_data_base64 = base64.b64encode(event_data_bson).decode('utf-8')
+    except Exception as e:
+        logger.error(f"Error encoding EventData: {e}")
+        return False
+
+    logger.info(f"EventDataBsonBase64: {event_data_base64}")
+
+    # Construct the payload
+    payload = {
+        "$type": "Feenics.Keep.WebApi.Model.EventMessagePosting, Feenics.Keep.WebApi.Model",
+        "OccurredOn": datetime.datetime.now(timezone.utc).isoformat(),
+        "AppKey": "MercuryCommands",
+        "EventTypeMoniker": {
+            "$type": "Feenics.Keep.WebApi.Model.MonikerItem, Feenics.Keep.WebApi.Model",
+            "Namespace": "MercuryServiceCommands",
+            "Nickname": "mercury:command-unlockDoor"
+        },
+        "RelatedObjects": [
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": door['Href'],
+                "LinkedObjectKey": door['Key'],
+                "CommonName": door['CommonName'],
+                "Relation": "Door",
+                "MetaDataBson": None
+            }
+        ],
+        "EventDataBsonBase64": event_data_base64
+    }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = SESSION.post(event_endpoint, headers=headers, json=payload)
+        response.raise_for_status()
+        logger.info("Door unlock event published successfully.")
+        return True
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error during event publishing: {http_err}")
+        logger.error(f"Response Content: {response.text}")
+        return False
+    except Exception as err:
+        logger.error(f"Error during event publishing: {err}")
+        return False
+
+def is_valid_email(email):
+    """
+    Validates the email format.
+    """
+    regex = r'^\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,4}\b'
+    return re.match(regex, email)
+
+def is_valid_phone(phone):
+    """
+    Validates the phone number format (simple validation).
+    """
+    regex = r'^\+\d{10,15}$'
+    return re.match(regex, phone)
+
+def validate_unlock_token(token):
+    """
+    Validates the unlock token.
+    """
+    with app.app_context():
+        unlock_token = UnlockToken.query.filter_by(token=token).first()
+
+        if not unlock_token:
+            return False, "Invalid token."
+
+        if datetime.datetime.utcnow() >= unlock_token.expires_at:
+            return False, "Token has expired."
+
+        if not unlock_token.user.is_membership_active():
+            return False, "Membership is no longer active."
+
+        return True, unlock_token
 
 # ----------------------------
 # Flask Routes
@@ -131,7 +424,7 @@ def generate_token():
     """
     Endpoint to generate a temporary unlock token for a user.
     Expects JSON data with first_name, last_name, email, and phone.
-    Returns the generated token in JSON response.
+    Returns the generated token and unlock link in JSON response.
     """
     data = request.json
     logger.info(f"Received token generation request from {request.remote_addr}: {data}")
@@ -158,17 +451,95 @@ def generate_token():
 
     try:
         with app.app_context():
-            # [User creation and token generation logic remains the same]
-            # ...
+            # Check if user already exists
+            user = User.query.filter_by(email=email).first()
+            if not user:
+                # Create a new user if not exists
+                membership_start = datetime.datetime.utcnow()
+                membership_end = membership_start + timedelta(hours=24)  # 24-hour validity
 
-            # Return the token in the response
-            return jsonify({'token': unlock_token_str}), 200
+                user = User(
+                    first_name=first_name,
+                    last_name=last_name,
+                    email=email,
+                    phone_number=phone_number,
+                    membership_start=membership_start,
+                    membership_end=membership_end
+                )
+                db.session.add(user)
+                db.session.commit()
+                logger.info(f"Created new user '{first_name} {last_name}' with ID: {user.id}")
+            else:
+                # Update membership_end if necessary
+                new_end = datetime.datetime.utcnow() + timedelta(hours=24)
+                if user.membership_end < new_end:
+                    user.membership_end = new_end
+                    db.session.commit()
+                    logger.info(f"Extended membership for existing user '{user.email}'")
+
+            # Generate Unlock Token and Link
+            unlock_token_str = generate_unlock_token(user.id)
+            if not unlock_token_str:
+                logger.error("Failed to generate unlock token.")
+                return jsonify({'error': 'Failed to generate unlock token.'}), 500
+
+            # Create the unlock link
+            unlock_link = create_unlock_link(unlock_token_str)
+
+            # Send SMS with Unlock Link
+            send_sms(phone_number, unlock_link)
+
+            # Return the token and unlock link in the response
+            return jsonify({'token': unlock_token_str, 'unlock_link': unlock_link}), 200
 
     except Exception as e:
         logger.exception(f"Error in generating token: {e}")
         return jsonify({'error': 'Internal server error.'}), 500
 
-# [Other routes remain unchanged]
+@app.route('/unlock', methods=['GET', 'POST'])
+def handle_unlock():
+    if request.method == 'GET':
+        token = request.args.get('token')
+
+        if not token:
+            logger.warning("Unlock attempt without token.")
+            return jsonify({'error': 'Token is missing'}), 400
+
+        is_valid, result = validate_unlock_token(token)
+
+        if not is_valid:
+            logger.warning(f"Invalid unlock token: {result}")
+            return jsonify({'error': result}), 400
+
+        unlock_token = result
+
+        # Render the unlock page with the unlock button
+        return render_template('unlock.html', token=token)
+
+    elif request.method == 'POST':
+        # Handle the form submission when the unlock button is clicked
+        token = request.form.get('token')
+        if not token:
+            logger.warning("Unlock attempt without token in form.")
+            return jsonify({'error': 'Token is missing in form submission'}), 400
+
+        is_valid, result = validate_unlock_token(token)
+
+        if not is_valid:
+            logger.warning(f"Invalid unlock token: {result}")
+            return jsonify({'error': result}), 400
+
+        unlock_token = result
+
+        user = unlock_token.user
+
+        logger.info(f"Unlocking door for user: {user.first_name} {user.last_name}, Email: {user.email}, Phone: {user.phone_number}")
+
+        # Unlock the door in a separate thread to avoid blocking
+        threading.Thread(target=unlock_door, args=(user, 3)).start()  # Unlock for 3 seconds
+
+        # Render a success page or message
+        return render_template('unlock.html', message='Door is unlocking for 3 seconds. Please wait...')
 
 # ----------------------------
 # Main Execution
