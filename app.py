@@ -553,15 +553,15 @@ def send_sms(phone_number, unlock_link):
     message_body = f"Your unlock link: {unlock_link}"
 
     try:
+        logger.info(f"Attempting to send SMS to {phone_number}")
         message = client.messages.create(
             body=message_body,
             from_=TWILIO_PHONE_NUMBER,
             to=phone_number
         )
-        logger.info(f"SMS sent to {phone_number}. SID: {message.sid}")
+        logger.info(f"SMS sent to {phone_number}. SID: {message.sid}, Status: {message.status}")
     except Exception as e:
         logger.error(f"Failed to send SMS to {phone_number}: {e}")
-
 # ----------------------------
 # User Creation and Messaging Workflow
 # ----------------------------
