@@ -340,7 +340,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
     card_number = generate_card_number()
-    facility_code = 100
+    facility_code = FACILITY_CODE
 
     # Generate IssueCode if required
     if issue_code_size > 0:
@@ -351,9 +351,10 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         issue_code = None  # IssueCode not required
         logger.info("IssueCode not required for this configuration.")
 
-    # Calculate EncodedCardNumber as (FacilityCode << 16) | CardNumber
-    encoded_card_number = (facility_code << 16) | card_number
-    logger.info(f"EncodedCardNumber: {encoded_card_number} (FacilityCode: {facility_code} << 16 | CardNumber: {card_number})")
+    # **Modification: Ensure EncodedCardNumber equals DisplayCardNumber**
+    encoded_card_number = card_number  # Set EncodedCardNumber equal to CardNumber
+    display_card_number = str(card_number).zfill(5)  # Ensure it's 5 digits with leading zeros if necessary
+    logger.info(f"EncodedCardNumber: {encoded_card_number}, DisplayCardNumber: {display_card_number}")
 
     # Prepare the current and expiration times
     membership_start = datetime.datetime.utcnow()
@@ -367,7 +368,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         logger.error("No access levels found.")
         raise Exception("No access levels available to assign to the user.")
 
-    # Prepare Access Level Assignments
+    # **Modification: Assign all retrieved access levels to the user**
     access_level_assignments = []
     for al in access_levels:
         assignment = {
@@ -377,12 +378,13 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             "ExpiresOn": expires_on
         }
         access_level_assignments.append(assignment)
+        logger.debug(f"Assigned AccessLevelKey: {al.get('Key')} to user.")
 
     # Prepare Card Assignment
     card_assignment = {
         "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
         "EncodedCardNumber": int(encoded_card_number),
-        "DisplayCardNumber": str(card_number).zfill(5),  # Ensure it's 5 digits with leading zeros if necessary
+        "DisplayCardNumber": display_card_number,
         "FacilityCode": int(facility_code),
         "ActiveOn": active_on,
         "ExpiresOn": expires_on,
@@ -399,6 +401,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     # Include IssueCode if required
     if issue_code is not None:
         card_assignment["IssueCode"] = int(issue_code)
+        logger.debug(f"Assigned IssueCode: {issue_code} to card.")
 
     user_data = {
         "$type": "Feenics.Keep.WebApi.Model.PersonInfo, Feenics.Keep.WebApi.Model",
@@ -434,7 +437,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "$type": "Feenics.Keep.WebApi.Model.MetadataItem, Feenics.Keep.WebApi.Model",
                 "Application": "CustomApp",
                 "Values": json.dumps({
-                    "CardNumber": str(card_number),
+                    "CardNumber": display_card_number,
                     "FacilityCode": str(facility_code),
                     "IssueCode": str(issue_code) if issue_code else None,
                 }),
@@ -894,17 +897,19 @@ def simulate_unlock(card_number, facility_code, issue_code):
                 logger.error("No Card Formats found.")
                 return
 
-            # Select a card format that supports IssueCode
+            # **Modification: Select card format where EncodedCardNumber equals DisplayCardNumber**
+            # Assuming that the card format does not require combining FacilityCode
             card_format = None
             for cf in card_formats:
-                # Assuming the card format has 'IssueCodeBitLength' to indicate support
-                if cf.get('IssueCodeBitLength') and cf.get('IssueCodeBitLength') > 0:
+                # Check if the card format expects EncodedCardNumber without FacilityCode
+                if cf.get('DisplayCardNumber') and cf.get('EncodedCardNumber') == cf.get('DisplayCardNumber'):
                     card_format = cf
                     logger.info(f"Selected Card Format: {cf.get('CommonName')}")
                     break
             if not card_format:
-                logger.error("No Card Format supporting IssueCode found.")
-                return
+                # If no specific format is found, select the first one
+                card_format = card_formats[0]
+                logger.info(f"Selected Default Card Format: {card_format.get('CommonName')}")
 
             controllers = get_controllers(BASE_ADDRESS, access_token, instance_id)
             if not controllers:
