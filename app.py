@@ -7,7 +7,6 @@ import logging
 import threading
 import datetime
 from datetime import timezone, timedelta
-import random
 
 from flask import Flask, request, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
@@ -74,6 +73,7 @@ if missing_env_vars:
 # Database Configuration using DATABASE_URL
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_EXPIRE_ON_COMMIT'] = False  # Prevents DetachedInstanceError
 db = SQLAlchemy(app)
 
 # Initialize Flask-Migrate
@@ -513,17 +513,14 @@ def test_send_unlock_sms():
     """
     try:
         with app.app_context():
-            # Step 1: Authenticate (if needed, not used in this simplified version)
-            # Skipping CRM API interactions since we're not assigning card numbers or access levels
-
-            # Step 2: Create a Test User
+            # Step 1: Create a Test User
             first_name = "Test"
             last_name = "User"
             email = f"test.user{random.randint(1000,9999)}@example.com"
             phone_number = "+1234567890"  # Use a valid test number
             membership_duration_hours = 24  # 24-hour membership for testing
 
-            # Step 3: Create the user in the local database
+            # Step 2: Create the user in the local database
             membership_start = datetime.datetime.utcnow()
             membership_end = membership_start + timedelta(hours=membership_duration_hours)
 
@@ -540,14 +537,14 @@ def test_send_unlock_sms():
             db.session.commit()
             logger.info(f"Test User '{first_name} {last_name}' created successfully with ID: {user.id}")
 
-            # Step 4: Generate Unlock Token and Link
+            # Step 3: Generate Unlock Token and Link
             unlock_token_str = generate_unlock_token(user.id)
             unlock_link = create_unlock_link(unlock_token_str)
 
             # **Log the Unlock URL for Testing**
             logger.info(f"Unlock URL for testing: {unlock_link}")
 
-            # Step 5: Send SMS with Unlock Link
+            # Step 4: Send SMS with Unlock Link
             send_sms(phone_number, unlock_link)
 
         logger.info(f"Test unlock link SMS sent successfully to {phone_number}")
