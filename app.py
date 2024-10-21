@@ -7,7 +7,7 @@ import logging
 import threading
 import datetime
 from datetime import timezone, timedelta
-import random
+
 from flask import Flask, request, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -225,7 +225,9 @@ def generate_unlock_token(user_id):
         db.session.add(unlock_token)
         db.session.commit()
 
-    logger.info(f"Generated unlock token for user {user.id}: {token_str}")
+        # Move the logging inside the app context
+        logger.info(f"Generated unlock token for user {user.id}: {token_str}")
+
     return token_str
 
 def create_unlock_link(token):
