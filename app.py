@@ -92,7 +92,7 @@ def create_session():
         total=5,
         backoff_factor=1,
         status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["HEAD", "GET", "OPTIONS", "POST"]
+        allowed_methods=["HEAD", "GET", "OPTIONS", "POST", "PUT"]
     )
     adapter = HTTPAdapter(max_retries=retry)
     session.mount('https://', adapter)
@@ -231,6 +231,7 @@ def get_badge_types(base_address, access_token, instance_id):
         response.raise_for_status()
 
         badge_types = response.json()
+        logger.info(f"Retrieved {len(badge_types)} badge types.")
         return badge_types
     except Exception as err:
         logger.error(f"Error retrieving badge types: {err}")
@@ -296,12 +297,13 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
 
 def generate_card_number():
     """
-    Generates a random card number within the valid range.
+    Generates a random card number within the valid range for 26-bit HID.
 
     Returns:
         int: A card number in the range of 1 to 65535.
     """
-    card_number = random.randint(1, 65535)
+    card_number = random.randint(1, 65535)  # 16-bit card number
+    logger.info(f"Generated Card Number: {card_number}")
     return card_number
 
 def get_access_levels(base_address, access_token, instance_id):
@@ -341,15 +343,23 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     facility_code = FACILITY_CODE
 
     # Generate IssueCode if required
-   # if issue_code_size > 0:
-    #max_issue_code = (1 << (issue_code_size * 8)) - 1  # Calculate max value based on size in bytes
-    #issue_code = random.randint(1, max_issue_code)
-    #else:
-    issue_code = None  # IssueCode not required
+    if issue_code_size > 0:
+        max_issue_code = (1 << (issue_code_size * 8)) - 1  # Calculate max value based on size in bytes
+        issue_code = random.randint(1, max_issue_code)
+        logger.info(f"Generated IssueCode: {issue_code}")
+    else:
+        issue_code = None  # IssueCode not required
+        logger.info("IssueCode not required for this configuration.")
+
+    # Calculate EncodedCardNumber as (FacilityCode << 16) | CardNumber
+    encoded_card_number = (facility_code << 16) | card_number
+    logger.info(f"EncodedCardNumber: {encoded_card_number} (FacilityCode: {facility_code} << 16 | CardNumber: {card_number})")
 
     # Prepare the current and expiration times
-    active_on = datetime.datetime.utcnow().isoformat()
-    expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat()
+    membership_start = datetime.datetime.utcnow()
+    membership_end = membership_start + timedelta(hours=membership_duration_hours)
+    active_on = membership_start.isoformat() + 'Z'
+    expires_on = membership_end.isoformat() + 'Z'
 
     # Retrieve all access levels
     access_levels = get_access_levels(base_address, access_token, instance_id)
@@ -371,8 +381,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     # Prepare Card Assignment
     card_assignment = {
         "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
-        "EncodedCardNumber": int(card_number),
-        "DisplayCardNumber": str(card_number),
+        "EncodedCardNumber": int(encoded_card_number),
+        "DisplayCardNumber": str(card_number).zfill(5),  # Ensure it's 5 digits with leading zeros if necessary
         "FacilityCode": int(facility_code),
         "ActiveOn": active_on,
         "ExpiresOn": expires_on,
@@ -449,18 +459,15 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             raise Exception("User ID not found in the response.")
 
         logger.info(f"User '{first_name} {last_name}' created successfully with ID: {user_id}")
-        logger.info(f"Assigned Card Number: {card_number}, Facility Code: {facility_code}, Issue Code: {issue_code}")
+        logger.info(f"Assigned EncodedCardNumber: {encoded_card_number}, Facility Code: {facility_code}, Issue Code: {issue_code}")
 
         # Create User in local database
-        membership_start = datetime.datetime.utcnow()
-        membership_end = membership_start + timedelta(hours=membership_duration_hours)
-
         user = User(
             first_name=first_name,
             last_name=last_name,
             email=email,
             phone_number=phone_number,
-            card_number=card_number,
+            card_number=encoded_card_number,
             facility_code=facility_code,
             issue_code=issue_code if issue_code else 0,
             membership_start=membership_start,
@@ -579,8 +586,12 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     logger.info(f"Event Data before encoding: {event_data}")
 
     # Convert EventData to BSON and then to Base64
-    event_data_bson = BSON.encode(event_data)
-    event_data_base64 = base64.b64encode(event_data_bson).decode('utf-8')
+    try:
+        event_data_bson = BSON.encode(event_data)
+        event_data_base64 = base64.b64encode(event_data_bson).decode('utf-8')
+    except Exception as e:
+        logger.error(f"Error encoding EventData: {e}")
+        return False
 
     logger.info(f"EventDataBsonBase64: {event_data_base64}")
 
@@ -662,6 +673,7 @@ def generate_unlock_token(user_id):
         db.session.add(unlock_token)
         db.session.commit()
 
+    logger.info(f"Generated unlock token for user {user_id}: {token_str}")
     return token_str
 
 def create_unlock_link(token):
@@ -669,6 +681,7 @@ def create_unlock_link(token):
     Creates an unlock link using the provided token.
     """
     unlock_link = f"{UNLOCK_LINK_BASE_URL}?token={token}"
+    logger.info(f"Created unlock link: {unlock_link}")
     return unlock_link
 
 def send_sms(phone_number, unlock_link):
@@ -733,7 +746,7 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 logger.info(f"User with email {email} already exists.")
                 return
 
-            # Create the user via CRM API and store in local database
+            # Step 5: Create the user via CRM API and store in local database
             user = create_user(
                 base_address=BASE_ADDRESS,
                 access_token=access_token,
@@ -747,11 +760,11 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 issue_code_size=issue_code_size
             )
 
-            # Step 5: Generate Unlock Token and Link
+            # Step 6: Generate Unlock Token and Link
             unlock_token_str = generate_unlock_token(user.id)
             unlock_link = create_unlock_link(unlock_token_str)
 
-            # Step 6: Send SMS with Unlock Link
+            # Step 7: Send SMS with Unlock Link
             send_sms(phone_number, unlock_link)
 
     except Exception as e:
@@ -794,6 +807,7 @@ def reset_database():
     try:
         db.drop_all()
         db.create_all()
+        logger.info("Database reset successfully.")
         return jsonify({'status': 'Database reset successfully'}), 200
     except Exception as e:
         logger.exception(f"Error resetting database: {e}")
@@ -860,7 +874,7 @@ def simulate_unlock(card_number, facility_code, issue_code):
     """
     try:
         with app.app_context():
-            # Authenticate
+            # Step 1: Authenticate
             access_token, instance_id = get_access_token(
                 base_address=BASE_ADDRESS,
                 instance_name=INSTANCE_NAME,
@@ -868,7 +882,7 @@ def simulate_unlock(card_number, facility_code, issue_code):
                 password=KEEP_PASSWORD
             )
 
-            # Retrieve required components
+            # Step 2: Retrieve required components
             readers = get_readers(BASE_ADDRESS, access_token, instance_id)
             if not readers:
                 logger.error("No Readers found.")
@@ -879,7 +893,18 @@ def simulate_unlock(card_number, facility_code, issue_code):
             if not card_formats:
                 logger.error("No Card Formats found.")
                 return
-            card_format = card_formats[0]  # Select the first card format
+
+            # Select a card format that supports IssueCode
+            card_format = None
+            for cf in card_formats:
+                # Assuming the card format has 'IssueCodeBitLength' to indicate support
+                if cf.get('IssueCodeBitLength') and cf.get('IssueCodeBitLength') > 0:
+                    card_format = cf
+                    logger.info(f"Selected Card Format: {cf.get('CommonName')}")
+                    break
+            if not card_format:
+                logger.error("No Card Format supporting IssueCode found.")
+                return
 
             controllers = get_controllers(BASE_ADDRESS, access_token, instance_id)
             if not controllers:
@@ -887,7 +912,7 @@ def simulate_unlock(card_number, facility_code, issue_code):
                 return
             controller = controllers[0]  # Select the first controller
 
-            # Simulate Card Read
+            # Step 3: Simulate Card Read
             success = simulate_card_read(
                 base_address=BASE_ADDRESS,
                 access_token=access_token,
@@ -948,7 +973,7 @@ def test_send_unlock_sms():
             phone_number = "+1234567890"  # Use a valid test number
             membership_duration_hours = 24  # 24-hour membership for testing
 
-            # Create the user via CRM API and store in local database
+            # Step 5: Create the user via CRM API and store in local database
             user = create_user(
                 base_address=BASE_ADDRESS,
                 access_token=access_token,
@@ -962,13 +987,14 @@ def test_send_unlock_sms():
                 issue_code_size=issue_code_size
             )
 
-            # Step 5: Generate Unlock Token and Link
+            # Step 6: Generate Unlock Token and Link
             unlock_token_str = generate_unlock_token(user.id)
             unlock_link = create_unlock_link(unlock_token_str)
 
-            # Step 6: Send SMS with Unlock Link
+            # Step 7: Send SMS with Unlock Link
             send_sms(phone_number, unlock_link)
 
+        logger.info(f"Test unlock link SMS sent successfully to {phone_number}")
         return jsonify({
             'status': 'Test unlock link SMS sent successfully',
             'email': email,
