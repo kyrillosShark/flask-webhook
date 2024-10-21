@@ -268,7 +268,7 @@ def generate_card_number():
     Returns:
         int: A 5-digit card number in the range of 1 to 65535.
     """
-    card_number = random.randint(1, 65535)
+    card_number = random.randint(10000, 99999)
     return card_number
 
 def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours):
