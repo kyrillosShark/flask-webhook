@@ -224,7 +224,7 @@ def generate_unlock_token(user_id):
         db.session.add(unlock_token)
         db.session.commit()
 
-    logger.info(f"Generated unlock token for user {user_id}: {token_str}")
+    logger.info(f"Generated unlock token for user {user.id}: {token_str}")
     return token_str
 
 def create_unlock_link(token):
@@ -255,139 +255,6 @@ def send_sms(phone_number, unlock_link):
             logger.error(f"Twilio Error Code: {e.code}")
         if hasattr(e, 'msg'):
             logger.error(f"Twilio Error Message: {e.msg}")
-
-# ----------------------------
-# User Creation and Messaging Workflow
-# ----------------------------
-
-def process_user_creation(first_name, last_name, email, phone_number, membership_duration_hours=24):
-    """
-    Complete workflow to create a user in the local database, generate unlock link, and send an SMS.
-    """
-    try:
-        with app.app_context():
-            # Create User in local database
-            membership_start = datetime.datetime.utcnow()
-            membership_end = membership_start + timedelta(hours=membership_duration_hours)
-
-            user = User(
-                first_name=first_name,
-                last_name=last_name,
-                email=email,
-                phone_number=phone_number,
-                membership_start=membership_start,
-                membership_end=membership_end
-            )
-
-            db.session.add(user)
-            db.session.commit()
-            logger.info(f"User '{first_name} {last_name}' created successfully with ID: {user.id}")
-
-            # Generate Unlock Token and Link
-            unlock_token_str = generate_unlock_token(user.id)
-            unlock_link = create_unlock_link(unlock_token_str)
-
-            # Send SMS with Unlock Link
-            send_sms(phone_number, unlock_link)
-
-    except Exception as e:
-        logger.exception(f"Error in processing user creation: {e}")
-
-# ----------------------------
-# Unlock Token Management
-# ----------------------------
-
-def validate_unlock_token(token):
-    """
-    Validates the unlock token.
-    """
-    with app.app_context():
-        unlock_token = UnlockToken.query.filter_by(token=token).first()
-
-        if not unlock_token:
-            return False, "Invalid token."
-
-        if unlock_token.used:
-            return False, "Token has already been used."
-
-        if datetime.datetime.utcnow() >= unlock_token.expires_at:
-            return False, "Token has expired."
-
-        if not unlock_token.user.is_membership_active():
-            return False, "Membership is no longer active."
-
-        return True, unlock_token
-
-# ----------------------------
-# Flask Routes
-# ----------------------------
-
-@app.route('/reset_database', methods=['POST'])
-def reset_database():
-    if not app.config['DEBUG']:
-        abort(403, description="Forbidden")
-
-    try:
-        db.drop_all()
-        db.create_all()
-        logger.info("Database reset successfully.")
-        return jsonify({'status': 'Database reset successfully'}), 200
-    except Exception as e:
-        logger.exception(f"Error resetting database: {e}")
-        return jsonify({'error': 'Failed to reset database'}), 500
-
-@app.route('/webhook', methods=['POST'])
-def handle_webhook():
-    data = request.json
-    logger.info(f"Received webhook data: {data}")
-
-    # Extract fields from the data
-    first_name = data.get('first_name')
-    last_name = data.get('last_name')
-    email = data.get('email')
-    phone_number = data.get('phone')
-
-    # Check for required fields
-    if not all([first_name, last_name, email, phone_number]):
-        logger.warning("Missing required fields.")
-        return jsonify({'error': 'Missing required fields.'}), 400
-
-    logger.info(f"Processing user: {first_name} {last_name}, Email: {email}, Phone: {phone_number}")
-
-    # Process user creation in a separate thread to avoid blocking
-    threading.Thread(target=process_user_creation, args=(
-        first_name, last_name, email, phone_number)).start()
-
-    return jsonify({'status': 'User creation in progress'}), 200
-
-@app.route('/unlock', methods=['GET'])
-def handle_unlock():
-    token = request.args.get('token')
-
-    if not token:
-        logger.warning("Unlock attempt without token.")
-        return jsonify({'error': 'Token is missing'}), 400
-
-    is_valid, result = validate_unlock_token(token)
-
-    if not is_valid:
-        logger.warning(f"Invalid unlock token: {result}")
-        return jsonify({'error': result}), 400
-
-    unlock_token = result
-
-    with app.app_context():
-        unlock_token.used = True
-        db.session.commit()
-
-    user = unlock_token.user
-
-    logger.info(f"Unlocking door for user: {user.first_name} {user.last_name}, Email: {user.email}, Phone: {user.phone_number}")
-
-    # Unlock the door in a separate thread to avoid blocking
-    threading.Thread(target=unlock_door, args=(user,)).start()
-
-    return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
 
 def unlock_door(user):
     """
@@ -501,6 +368,198 @@ def send_unlock_door_command(base_address, access_token, instance_id, door, dura
     except Exception as err:
         logger.error(f"Error during event publishing: {err}")
         return False
+
+# ----------------------------
+# User Creation and Messaging Workflow
+# ----------------------------
+
+def process_user_creation(first_name, last_name, email, phone_number, membership_duration_hours=24):
+    """
+    Complete workflow to create a user in the local database, generate unlock link, and send an SMS.
+    """
+    try:
+        with app.app_context():
+            # Create User in local database
+            membership_start = datetime.datetime.utcnow()
+            membership_end = membership_start + timedelta(hours=membership_duration_hours)
+
+            user = User(
+                first_name=first_name,
+                last_name=last_name,
+                email=email,
+                phone_number=phone_number,
+                membership_start=membership_start,
+                membership_end=membership_end
+            )
+
+            db.session.add(user)
+            db.session.commit()
+            logger.info(f"User '{first_name} {last_name}' created successfully with ID: {user.id}")
+
+            # Generate Unlock Token and Link
+            unlock_token_str = generate_unlock_token(user.id)
+            unlock_link = create_unlock_link(unlock_token_str)
+
+            # **Log the Unlock URL for Testing**
+            logger.info(f"Unlock URL for testing: {unlock_link}")
+
+            # Send SMS with Unlock Link
+            send_sms(phone_number, unlock_link)
+
+    except Exception as e:
+        logger.exception(f"Error in processing user creation: {e}")
+
+# ----------------------------
+# Unlock Token Management
+# ----------------------------
+
+def validate_unlock_token(token):
+    """
+    Validates the unlock token.
+    """
+    with app.app_context():
+        unlock_token = UnlockToken.query.filter_by(token=token).first()
+
+        if not unlock_token:
+            return False, "Invalid token."
+
+        if unlock_token.used:
+            return False, "Token has already been used."
+
+        if datetime.datetime.utcnow() >= unlock_token.expires_at:
+            return False, "Token has expired."
+
+        if not unlock_token.user.is_membership_active():
+            return False, "Membership is no longer active."
+
+        return True, unlock_token
+
+# ----------------------------
+# Flask Routes
+# ----------------------------
+
+@app.route('/reset_database', methods=['POST'])
+def reset_database():
+    if not app.config['DEBUG']:
+        abort(403, description="Forbidden")
+
+    try:
+        db.drop_all()
+        db.create_all()
+        logger.info("Database reset successfully.")
+        return jsonify({'status': 'Database reset successfully'}), 200
+    except Exception as e:
+        logger.exception(f"Error resetting database: {e}")
+        return jsonify({'error': 'Failed to reset database'}), 500
+
+@app.route('/webhook', methods=['POST'])
+def handle_webhook():
+    data = request.json
+    logger.info(f"Received webhook data: {data}")
+
+    # Extract fields from the data
+    first_name = data.get('first_name')
+    last_name = data.get('last_name')
+    email = data.get('email')
+    phone_number = data.get('phone')
+
+    # Check for required fields
+    if not all([first_name, last_name, email, phone_number]):
+        logger.warning("Missing required fields.")
+        return jsonify({'error': 'Missing required fields.'}), 400
+
+    logger.info(f"Processing user: {first_name} {last_name}, Email: {email}, Phone: {phone_number}")
+
+    # Process user creation in a separate thread to avoid blocking
+    threading.Thread(target=process_user_creation, args=(
+        first_name, last_name, email, phone_number)).start()
+
+    return jsonify({'status': 'User creation in progress'}), 200
+
+@app.route('/unlock', methods=['GET'])
+def handle_unlock():
+    token = request.args.get('token')
+
+    if not token:
+        logger.warning("Unlock attempt without token.")
+        return jsonify({'error': 'Token is missing'}), 400
+
+    is_valid, result = validate_unlock_token(token)
+
+    if not is_valid:
+        logger.warning(f"Invalid unlock token: {result}")
+        return jsonify({'error': result}), 400
+
+    unlock_token = result
+
+    with app.app_context():
+        unlock_token.used = True
+        db.session.commit()
+
+    user = unlock_token.user
+
+    logger.info(f"Unlocking door for user: {user.first_name} {user.last_name}, Email: {user.email}, Phone: {user.phone_number}")
+
+    # Unlock the door in a separate thread to avoid blocking
+    threading.Thread(target=unlock_door, args=(user,)).start()
+
+    return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
+
+@app.route('/test_send_unlock_sms', methods=['GET'])
+def test_send_unlock_sms():
+    """
+    Test route to create a test user and send an unlock link via SMS.
+    """
+    try:
+        with app.app_context():
+            # Step 1: Authenticate (if needed, not used in this simplified version)
+            # Skipping CRM API interactions since we're not assigning card numbers or access levels
+
+            # Step 2: Create a Test User
+            first_name = "Test"
+            last_name = "User"
+            email = f"test.user{random.randint(1000,9999)}@example.com"
+            phone_number = "+1234567890"  # Use a valid test number
+            membership_duration_hours = 24  # 24-hour membership for testing
+
+            # Step 3: Create the user in the local database
+            membership_start = datetime.datetime.utcnow()
+            membership_end = membership_start + timedelta(hours=membership_duration_hours)
+
+            user = User(
+                first_name=first_name,
+                last_name=last_name,
+                email=email,
+                phone_number=phone_number,
+                membership_start=membership_start,
+                membership_end=membership_end
+            )
+
+            db.session.add(user)
+            db.session.commit()
+            logger.info(f"Test User '{first_name} {last_name}' created successfully with ID: {user.id}")
+
+            # Step 4: Generate Unlock Token and Link
+            unlock_token_str = generate_unlock_token(user.id)
+            unlock_link = create_unlock_link(unlock_token_str)
+
+            # **Log the Unlock URL for Testing**
+            logger.info(f"Unlock URL for testing: {unlock_link}")
+
+            # Step 5: Send SMS with Unlock Link
+            send_sms(phone_number, unlock_link)
+
+        logger.info(f"Test unlock link SMS sent successfully to {phone_number}")
+        return jsonify({
+            'status': 'Test unlock link SMS sent successfully',
+            'email': email,
+            'phone_number': phone_number,
+            'unlock_link': unlock_link
+        }), 200
+
+    except Exception as e:
+        logger.exception(f"Error in test_send_unlock_sms: {e}")
+        return jsonify({'error': 'Failed to send test unlock SMS'}), 500
 
 # ----------------------------
 # Main Execution
