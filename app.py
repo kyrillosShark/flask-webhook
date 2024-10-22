@@ -247,7 +247,6 @@ def get_badge_types(base_address, access_token, instance_id):
         logger.error(f"Error retrieving badge types: {err}")
         raise
 
-
 def create_badge_type(base_address, access_token, instance_id, badge_type_name):
     """
     Creates a new Badge Type in the Keep by Feenics system.
@@ -343,10 +342,45 @@ def get_access_levels(base_address, access_token, instance_id):
         logger.error(f"Error retrieving access levels: {err}")
         raise
 
+def get_card_formats(base_address, access_token, instance_id):
+    """
+    Retrieves a list of available Card Formats.
 
-import random
+    Returns:
+        list: List of card format objects.
+    """
+    card_formats_endpoint = f"{base_address}/api/f/{instance_id}/cardformats"
 
-def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours):
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = SESSION.get(card_formats_endpoint, headers=headers)
+        response.raise_for_status()
+        card_formats_data = response.json()
+
+        # Handle both dict and list responses
+        if isinstance(card_formats_data, dict):
+            card_formats = card_formats_data.get('value', [])
+            if not card_formats:
+                logger.warning("No card formats found under 'value' key.")
+        elif isinstance(card_formats_data, list):
+            card_formats = card_formats_data
+        else:
+            logger.error("Unexpected data format for card formats.")
+            card_formats = []
+
+        # Log the retrieved card formats for debugging
+        logger.debug(f"Card Formats Data: {card_formats_data}")
+        logger.info(f"Retrieved {len(card_formats)} card formats.")
+        return card_formats
+    except Exception as err:
+        logger.error(f"Error retrieving card formats: {err}")
+        raise
+
+def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours, issue_code_size):
     """
     Creates a new user in the Keep by Feenics system with access to all access levels.
 
@@ -357,7 +391,13 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
 
     card_number = generate_card_number()
     facility_code = FACILITY_CODE  # Use the global facility code
-    issue_code = ISSUE_CODE        # Use the global issue code
+
+    # Generate issue_code based on issue_code_size
+    if issue_code_size > 0:
+        max_issue_code = (10 ** issue_code_size) - 1
+        issue_code = random.randint(1, max_issue_code)
+    else:
+        issue_code = None
 
     # Prepare the current and expiration times
     active_on = datetime.datetime.utcnow().isoformat()
@@ -397,6 +437,23 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     selected_card_format = random.choice(hid_26_card_formats)
     logger.info(f"Selected Card Format: {selected_card_format}")
 
+    # Prepare CardAssignmentInfo
+    card_assignment = {
+        "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
+        "EncodedCardNumber": int(card_number),
+        "DisplayCardNumber": str(card_number),
+        "FacilityCode": int(facility_code),
+        "ActiveOn": active_on,
+        "ExpiresOn": expires_on,
+        "AntiPassbackExempt": False,
+        "ExtendedAccess": False,
+        "CardFormatKey": selected_card_format.get("Key")
+    }
+
+    # Include IssueCode if available
+    if issue_code is not None:
+        card_assignment["IssueCode"] = int(issue_code)
+
     user_data = {
         "$type": "Feenics.Keep.WebApi.Model.PersonInfo, Feenics.Keep.WebApi.Model",
         "CommonName": f"{first_name} {last_name}",
@@ -424,20 +481,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "MetaDataBson": None
             }
         ],
-        "CardAssignments": [
-            {
-                "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
-                "EncodedCardNumber": int(card_number),
-                "DisplayCardNumber": str(card_number),
-                "FacilityCode": int(facility_code),
-                "IssueCode": int(issue_code),  # Added IssueCode
-                "ActiveOn": active_on,
-                "ExpiresOn": expires_on,
-                "AntiPassbackExempt": False,
-                "ExtendedAccess": False,
-                "CardFormatKey": selected_card_format.get("Key")  # Assuming this key exists
-            }
-        ],
+        "CardAssignments": [card_assignment],
         "AccessLevelAssignments": access_level_assignments,
         "Metadata": [
             {
@@ -446,7 +490,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "Values": json.dumps({
                     "CardNumber": str(card_number),
                     "FacilityCode": str(facility_code),
-                    "IssueCode": str(issue_code)
+                    "IssueCode": str(issue_code) if issue_code is not None else None
                 }),
                 "ShouldPublishUpdateEvents": False
             }
@@ -495,7 +539,6 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         logger.error(f"Error during user creation: {err}")
         raise
 
-
 def get_readers(base_address, access_token, instance_id):
     """
     Retrieves a list of available Readers.
@@ -514,51 +557,24 @@ def get_readers(base_address, access_token, instance_id):
         response = SESSION.get(readers_endpoint, headers=headers)
         response.raise_for_status()
         readers_data = response.json()
-        readers = readers_data.get('value', readers_data)
+
+        if isinstance(readers_data, dict):
+            readers = readers_data.get('value', [])
+            if not readers:
+                logger.warning("No readers found under 'value' key.")
+        elif isinstance(readers_data, list):
+            readers = readers_data
+        else:
+            logger.error("Unexpected data format for readers.")
+            readers = []
+
+        # Log the retrieved readers for debugging
+        logger.debug(f"Readers Data: {readers_data}")
         logger.info(f"Retrieved {len(readers)} readers.")
         return readers
     except Exception as err:
         logger.error(f"Error retrieving readers: {err}")
         raise
-
-def get_card_formats(base_address, access_token, instance_id):
-    """
-    Retrieves a list of available Card Formats.
-
-    Returns:
-        list: List of card format objects.
-    """
-    card_formats_endpoint = f"{base_address}/api/f/{instance_id}/cardformats"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = SESSION.get(card_formats_endpoint, headers=headers)
-        response.raise_for_status()
-        card_formats_data = response.json()
-
-        # Handle both dict and list responses
-        if isinstance(card_formats_data, dict):
-            card_formats = card_formats_data.get('value', [])
-            if not card_formats:
-                logger.warning("No card formats found under 'value' key.")
-        elif isinstance(card_formats_data, list):
-            card_formats = card_formats_data
-        else:
-            logger.error("Unexpected data format for card formats.")
-            card_formats = []
-
-        # Log the retrieved card formats for debugging
-        logger.debug(f"Card Formats Data: {card_formats_data}")
-        logger.info(f"Retrieved {len(card_formats)} card formats.")
-        return card_formats
-    except Exception as err:
-        logger.error(f"Error retrieving card formats: {err}")
-        raise
-
 
 def get_controllers(base_address, access_token, instance_id):
     """
@@ -578,7 +594,19 @@ def get_controllers(base_address, access_token, instance_id):
         response = SESSION.get(controllers_endpoint, headers=headers)
         response.raise_for_status()
         controllers_data = response.json()
-        controllers = controllers_data.get('value', controllers_data)
+
+        if isinstance(controllers_data, dict):
+            controllers = controllers_data.get('value', [])
+            if not controllers:
+                logger.warning("No controllers found under 'value' key.")
+        elif isinstance(controllers_data, list):
+            controllers = controllers_data
+        else:
+            logger.error("Unexpected data format for controllers.")
+            controllers = []
+
+        # Log the retrieved controllers for debugging
+        logger.debug(f"Controllers Data: {controllers_data}")
         logger.info(f"Retrieved {len(controllers)} controllers.")
         return controllers
     except Exception as err:
@@ -783,7 +811,7 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 phone_number=phone_number,
                 badge_type_info=badge_type_info,
                 membership_duration_hours=membership_duration_hours,
-                issue_code_size=issue_code_size
+                issue_code_size=issue_code_size  # Pass the issue_code_size here
             )
 
             # Step 5: Generate Unlock Token and Link
@@ -886,7 +914,7 @@ def handle_unlock():
     facility_code = unlock_token.user.facility_code
     issue_code = unlock_token.user.issue_code
 
-    logger.info(f"Simulating unlock for card number: {card_number}, facility code: {facility_code}, issue code: {issue_code}")
+    logger.info(f"Simulating unlock for card number: {card_number}, facility code: {facility_code}, issue_code: {issue_code}")
 
     # Simulate the card read in a separate thread to avoid blocking
     threading.Thread(target=simulate_unlock, args=(card_number, facility_code, issue_code)).start()
@@ -967,5 +995,6 @@ def simulate_unlock(card_number, facility_code, issue_code):
 # ----------------------------
 
 if __name__ == "__main__":
-    # Run the Flask app
-    app.run(host='0.0.0.0', port=5000)
+    # Get the port from environment variables (for deployment platforms like Render)
+    port = int(os.getenv("PORT", 5000))  # Default to 5000 if PORT is not set
+    app.run(host='0.0.0.0', port=port)
