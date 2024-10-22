@@ -277,7 +277,7 @@ def send_sms(phone_number, unlock_link):
 
 def unlock_door(user, duration_seconds=3):
     """
-    Sends a command to unlock the door for duration_seconds seconds, including user's information in the event data.
+    Sends a command to unlock the door for duration_seconds seconds.
     """
     try:
         with app.app_context():
