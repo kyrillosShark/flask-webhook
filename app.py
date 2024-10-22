@@ -344,7 +344,9 @@ def get_access_levels(base_address, access_token, instance_id):
         raise
 
 
-def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours, issue_code_size):
+import random
+
+def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours):
     """
     Creates a new user in the Keep by Feenics system with access to all access levels.
 
@@ -354,18 +356,12 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
     card_number = generate_card_number()
-    facility_code = FACILITY_CODE
-
-    # Generate IssueCode if required
-    if issue_code_size > 0:
-        max_issue_code = (1 << (issue_code_size * 8)) - 1  # Calculate max value based on size in bytes
-        issue_code = random.randint(1, max_issue_code)
-    else:
-        issue_code = None  # IssueCode not required
+    facility_code = FACILITY_CODE  # Use the global facility code
+    issue_code = ISSUE_CODE        # Use the global issue code
 
     # Prepare the current and expiration times
-    active_on = datetime.datetime.utcnow().isoformat() + "Z"
-    expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat() + "Z"
+    active_on = datetime.datetime.utcnow().isoformat()
+    expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat()
 
     # Retrieve all access levels
     access_levels = get_access_levels(base_address, access_token, instance_id)
@@ -388,38 +384,18 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     card_formats = get_card_formats(base_address, access_token, instance_id)
     if not card_formats:
         logger.error("No card formats found.")
-        raise Exception("No card formats available to assign to the card.")
+        raise Exception("No card formats available for assignment.")
 
-    # Find the HID 26-bit card format
-    hid_card_format = next((cf for cf in card_formats if cf.get("CommonName") == "HID 26-bit"), None)
-    if not hid_card_format:
+    # Filter for HID 26-bit card formats
+    hid_26_card_formats = [cf for cf in card_formats if cf.get('FormatType') == 'HID_26_bit']
+
+    if not hid_26_card_formats:
         logger.error("HID 26-bit card format not found.")
         raise Exception("HID 26-bit card format is required for card assignment.")
 
-    # Prepare Card Assignment
-    card_assignment = {
-        "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
-        "EncodedCardNumber": int(card_number),
-        "DisplayCardNumber": str(card_number),
-        "FacilityCode": int(facility_code),
-        "ActiveOn": active_on,
-        "ExpiresOn": expires_on,
-        "CardFormat": {
-            "LinkedObjectKey": hid_card_format['Key'],
-        },
-        "AntiPassbackExempt": False,
-        "ExtendedAccess": False,
-        "PinExempt": True,
-        "IsDisabled": False,
-        "ManagerLevel": 0,
-        "Note": None,
-        "OriginalUseCount": None,
-        "CurrentUseCount": 0,
-    }
-
-    # Include IssueCode if required
-    if issue_code is not None:
-        card_assignment["IssueCode"] = int(issue_code)
+    # Randomly select one HID 26-bit card format
+    selected_card_format = random.choice(hid_26_card_formats)
+    logger.info(f"Selected Card Format: {selected_card_format}")
 
     user_data = {
         "$type": "Feenics.Keep.WebApi.Model.PersonInfo, Feenics.Keep.WebApi.Model",
@@ -448,7 +424,20 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "MetaDataBson": None
             }
         ],
-        "CardAssignments": [card_assignment],
+        "CardAssignments": [
+            {
+                "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
+                "EncodedCardNumber": int(card_number),
+                "DisplayCardNumber": str(card_number),
+                "FacilityCode": int(facility_code),
+                "IssueCode": int(issue_code),  # Added IssueCode
+                "ActiveOn": active_on,
+                "ExpiresOn": expires_on,
+                "AntiPassbackExempt": False,
+                "ExtendedAccess": False,
+                "CardFormatKey": selected_card_format.get("Key")  # Assuming this key exists
+            }
+        ],
         "AccessLevelAssignments": access_level_assignments,
         "Metadata": [
             {
@@ -457,7 +446,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "Values": json.dumps({
                     "CardNumber": str(card_number),
                     "FacilityCode": str(facility_code),
-                    "IssueCode": str(issue_code) if issue_code else None,
+                    "IssueCode": str(issue_code)
                 }),
                 "ShouldPublishUpdateEvents": False
             }
@@ -484,16 +473,16 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
 
         # Create User in local database
         membership_start = datetime.datetime.utcnow()
-        membership_end = membership_start + timedelta(hours=membership_duration_hours)
+        membership_end = membership_start + timedelta(hours=membership_duration_hours)  # Customizable duration
 
         user = User(
             first_name=first_name,
             last_name=last_name,
             email=email,
             phone_number=phone_number,
-            card_number=card_number,
+            card_number=card_number,  # Stored as integer
             facility_code=facility_code,
-            issue_code=issue_code if issue_code else 0,
+            issue_code=issue_code,     # Store issue code
             membership_start=membership_start,
             membership_end=membership_end
         )
@@ -505,6 +494,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
         raise
+
 
 def get_readers(base_address, access_token, instance_id):
     """
@@ -561,6 +551,8 @@ def get_card_formats(base_address, access_token, instance_id):
             logger.error("Unexpected data format for card formats.")
             card_formats = []
 
+        # Log the retrieved card formats for debugging
+        logger.debug(f"Card Formats Data: {card_formats_data}")
         logger.info(f"Retrieved {len(card_formats)} card formats.")
         return card_formats
     except Exception as err:
