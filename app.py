@@ -8,11 +8,12 @@ import threading
 import datetime
 from datetime import timezone, timedelta
 import re
+import random  # Ensure random is imported
 from flask import Flask, request, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
-import random
+
 from twilio.rest import Client
 import requests
 from requests.adapters import HTTPAdapter
@@ -367,24 +368,37 @@ def create_person(base_address, access_token, instance_id, user):
 
 def assign_card_to_person(base_address, access_token, instance_id, person):
     """
-    Assigns a card to the person.
+    Assigns a card to the person using HID 26-bit format with facility code 111.
     """
     cards_endpoint = f"{base_address}/api/f/{instance_id}/People/{person['Key']}/Cards"
 
-    # Generate a unique card number (for demonstration purposes)
-    card_number = random.randint(1000000000, 9999999999)
+    # Generate a unique card number in the range 0 to 65,535
+    card_number = generate_unique_card_number(base_address, access_token, instance_id)
+
+    # Facility code is set to 111
+    facility_code = 111
 
     payload = {
+        "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
+        "Key": None,
         "EncodedCardNumber": card_number,
         "DisplayCardNumber": str(card_number),
+        "FacilityCode": facility_code,
         "ActiveOn": datetime.datetime.utcnow().isoformat() + "Z",
         "ExpiresOn": (datetime.datetime.utcnow() + timedelta(days=365)).isoformat() + "Z",
+        "PinCode": None,
         "AntiPassbackExempt": False,
         "ExtendedAccess": False,
         "PinExempt": False,
         "IsDisabled": False,
         "ManagerLevel": 0,
-        "CurrentUseCount": 0
+        "OriginalUseCount": None,
+        "CurrentUseCount": 0,
+        "Note": None,
+        "HexValue": None,
+        "RecordId": None,
+        "LastUsed": None,
+        "Href": None
     }
 
     headers = {
@@ -403,10 +417,46 @@ def assign_card_to_person(base_address, access_token, instance_id, person):
         logger.error(f"HTTP error during card assignment: {http_err}")
         logger.error(f"Response Status Code: {response.status_code}")
         logger.error(f"Response Content: {response.text}")
+        if response.status_code == 400:
+            logger.error(f"Bad Request: {response.json()}")
         return None
     except Exception as err:
         logger.error(f"Error during card assignment: {err}")
         return None
+
+def generate_unique_card_number(base_address, access_token, instance_id):
+    """
+    Generates a valid and unique card number (0 to 65,535).
+    """
+    min_value = 0
+    max_value = 65535
+
+    while True:
+        card_number = random.randint(min_value, max_value)
+        if is_card_number_unique(base_address, access_token, instance_id, card_number):
+            logger.info(f"Generated unique card number: {card_number}")
+            return card_number
+
+def is_card_number_unique(base_address, access_token, instance_id, card_number):
+    """
+    Checks if the card number is already assigned to another person.
+    """
+    endpoint = f"{base_address}/api/f/{instance_id}/Cards?$filter=EncodedCardNumber eq {card_number}"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json"
+    }
+    try:
+        response = SESSION.get(endpoint, headers=headers)
+        response.raise_for_status()
+        cards = response.json().get('value', [])
+        is_unique = len(cards) == 0
+        logger.info(f"Card number {card_number} is {'unique' if is_unique else 'not unique'}")
+        return is_unique
+    except Exception as e:
+        logger.error(f"Error checking card number uniqueness: {e}")
+        # Return False to avoid assigning potentially duplicate card numbers
+        return False
 
 def simulate_card_read(base_address, access_token, instance_id, card_assignment, user):
     """
@@ -424,7 +474,7 @@ def simulate_card_read(base_address, access_token, instance_id, card_assignment,
     # Prepare EventDataBsonBase64
     event_data = {
         "Reason": "Simulated card read",
-        "FacilityCode": 0,  # Update if necessary
+        "FacilityCode": card_assignment.get('FacilityCode', 0),
         "EncodedCardNumber": card_assignment['EncodedCardNumber']
     }
     event_data_bson = BSON.encode(event_data)
