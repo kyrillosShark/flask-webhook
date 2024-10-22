@@ -587,12 +587,9 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     card_number, _ = generate_card_number(existing_card_numbers, facility_code=FACILITY_CODE)  # Unpack the tuple
     facility_code = FACILITY_CODE  # Integer 128
 
-    # Since IssueCodeLength is 0, do not set issue_code
-    # issue_code = 0  # Removed
-
     # Prepare active and expiration times
-    active_on = datetime.datetime.utcnow().isoformat() + "Z"
-    expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat() + "Z"
+    active_on = datetime.utcnow().isoformat() + "Z"
+    expires_on = (datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat() + "Z"
 
     # Retrieve the access level named 'Access'
     access_levels = get_access_levels(base_address, access_token, instance_id)
@@ -664,15 +661,15 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         "CardAssignments": [
             {
                 "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
-                "EncodedCardNumber": card_number,  # Integer within 5 digits
+                "EncodedCardNumber": card_number,        # Integer within 5 digits
                 "DisplayCardNumber": str(card_number).zfill(5),  # 5-digit string
-                "FacilityCode": facility_code,       # Integer 128
-                # "IssueCode": issue_code,                 # Omitted
+                "FacilityCode": facility_code,          # Integer 128
                 "CardFormatKey": selected_card_format.get("Key"),
                 "ActiveOn": active_on,
                 "ExpiresOn": expires_on,
                 "AntiPassbackExempt": False,
                 "ExtendedAccess": False
+                # "IssueCode": issue_code,              # Ensure this is removed
             }
         ],
         "AccessLevelAssignments": access_level_assignments,
@@ -681,9 +678,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "$type": "Feenics.Keep.WebApi.Model.MetadataItem, Feenics.Keep.WebApi.Model",
                 "Application": "CustomApp",
                 "Values": json.dumps({
-                    "CardNumber": str(card_number).zfill(5),  # 5-digit string
-                    "FacilityCode": str(facility_code).zfill(8)  # Zero-padded to 8 digits
-                    # "IssueCode": str(issue_code)  # Omitted
+                    "CardNumber": str(card_number).zfill(5),        # 5-digit string
+                    "FacilityCode": str(facility_code).zfill(8)     # Zero-padded to 8 digits
                 }),
                 "ShouldPublishUpdateEvents": False
             }
@@ -712,7 +708,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         logger.info(f"Assigned Card Number: {card_number}, Facility Code: {facility_code}")
 
         # Create User in local database
-        membership_start = datetime.datetime.utcnow()
+        membership_start = datetime.utcnow()
         membership_end = membership_start + timedelta(hours=membership_duration_hours)
 
         user = User(
@@ -720,9 +716,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             last_name=last_name,
             email=email,
             phone_number=phone_number,
-            card_number=card_number,  # Store as integer
-            facility_code=facility_code,
-            # issue_code=issue_code,      # Omitted
+            card_number=card_number,        # Store as integer
+            facility_code=facility_code,    # Now valid
             membership_start=membership_start,
             membership_end=membership_end
         )
@@ -755,8 +750,6 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
         raise
-
-
 
 def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number, issue_code):
     """
