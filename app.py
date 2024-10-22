@@ -464,6 +464,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     facility_code = FACILITY_CODE  # Use the global facility code
 
     # Generate issue code (set to a fixed value or randomly)
+    #
     issue_code = random.randint(1, 9999)  # Example: 4-digit issue code
 
     # Prepare the current and expiration times
@@ -777,6 +778,7 @@ def send_sms(phone_number, unlock_link):
 def process_user_creation(first_name, last_name, email, phone_number, membership_duration_hours=24):
     """
     Complete workflow to create a user in CRM, store membership info, generate unlock link, and send an SMS.
+    Returns the unlock link.
     """
     try:
         with app.app_context():
@@ -809,10 +811,16 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
             existing_user = User.query.filter_by(email=email).first()
             if existing_user:
                 logger.info(f"User with email {email} already exists.")
-                return
+                # Generate a new unlock link for the existing user
+                unlock_token_str = generate_unlock_token(existing_user.id)
+                unlock_link = create_unlock_link(unlock_token_str)
+                sms_sent = send_sms(phone_number, unlock_link)
+                if not sms_sent:
+                    logger.warning(f"SMS sending failed for existing user '{first_name} {last_name}'.")
+                return unlock_link
 
-            # Create the user via CRM API and store in local database
-            user = create_user(
+            # Step 5: Create the user via CRM API and store in local database
+            unlock_link = create_user(
                 base_address=BASE_ADDRESS,
                 access_token=access_token,
                 instance_id=instance_id,
@@ -821,19 +829,16 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 email=email,
                 phone_number=phone_number,
                 badge_type_info=badge_type_info,
-                membership_duration_hours=membership_duration_hours,
-                #issue_code_size=issue_code_size
+                membership_duration_hours=membership_duration_hours
             )
 
-            # Step 5: Generate Unlock Token and Link
-            unlock_token_str = generate_unlock_token(user.id)
-            unlock_link = create_unlock_link(unlock_token_str)
-
-            # Step 6: Send SMS with Unlock Link
-            send_sms(phone_number, unlock_link)
+            # Return the unlock link
+            return unlock_link
 
     except Exception as e:
         logger.exception(f"Error in processing user creation: {e}")
+        return None
+
 
 # ----------------------------
 # Unlock Token Management
@@ -1001,6 +1006,7 @@ def simulate_unlock(card_number, facility_code, issue_code):
 
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
+
 
 # ----------------------------
 # Main Execution
