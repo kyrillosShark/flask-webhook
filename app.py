@@ -574,7 +574,7 @@ def get_controllers(base_address, access_token, instance_id):
 def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours):
     """
     Creates a new user in the Keep by Feenics system with the 'Access' access level.
-    
+
     Returns:
         str: The unlock link generated for the user.
     """
@@ -585,7 +585,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
 
     # Generate unique 5-digit card number
     card_number, _ = generate_card_number(existing_card_numbers, facility_code=FACILITY_CODE)  # Unpack the tuple
-    facility_code = FACILITY_CODE  # Already set to 128 via environment variable
+    facility_code = FACILITY_CODE  # Integer 128
 
     # Since IssueCodeLength is 0, do not set issue_code
     # issue_code = 0  # Removed
@@ -622,7 +622,10 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         logger.error("No card formats found.")
         raise Exception("No card formats available for assignment.")
 
-    # Select the card format with CommonName '128'
+    # Debug: Log all retrieved card formats
+    logger.debug(f"Retrieved Card Formats: {[cf.get('CommonName') for cf in card_formats]}")
+
+    # Select the card format with CommonName matching BADGE_TYPE_NAME
     selected_card_format = next((cf for cf in card_formats if cf.get('CommonName') == BADGE_TYPE_NAME), None)
     if not selected_card_format:
         logger.error(f"Card format '{BADGE_TYPE_NAME}' not found.")
@@ -663,7 +666,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
                 "EncodedCardNumber": card_number,  # Integer within 5 digits
                 "DisplayCardNumber": str(card_number).zfill(5),  # 5-digit string
-                "FacilityCode": facility_code,       # 128
+                "FacilityCode": facility_code,       # Integer 128
                 # "IssueCode": issue_code,                 # Omitted
                 "CardFormatKey": selected_card_format.get("Key"),
                 "ActiveOn": active_on,
@@ -679,7 +682,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "Application": "CustomApp",
                 "Values": json.dumps({
                     "CardNumber": str(card_number).zfill(5),  # 5-digit string
-                    "FacilityCode": str(facility_code).zfill(8),  # Zero-padded to 8 digits
+                    "FacilityCode": str(facility_code).zfill(8)  # Zero-padded to 8 digits
                     # "IssueCode": str(issue_code)  # Omitted
                 }),
                 "ShouldPublishUpdateEvents": False
@@ -741,10 +744,14 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     except requests.exceptions.HTTPError as http_err:
         if response.status_code == 400:
             logger.error(f"Bad Request during user creation: {response.text}")
+            raise Exception("Invalid data provided for user creation.")
+        elif response.status_code == 404:
+            logger.error(f"Resource not found during user creation: {response.text}")
+            raise Exception("Required resources for user creation are missing.")
         else:
             logger.error(f"HTTP error during user creation: {http_err}")
             logger.error(f"Response Content: {response.text}")
-        raise
+            raise
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
         raise
