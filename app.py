@@ -451,18 +451,20 @@ def get_controllers(base_address, access_token, instance_id):
         logger.error(f"Error retrieving controllers: {err}")
         raise
 
-def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours, issue_code_size):
+def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours):
     """
     Creates a new user in the Keep by Feenics system with the 'Access' access level.
+
+    Returns:
+        str: The unlock link generated for the user.
     """
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
     card_number = generate_card_number()
-    facility_code = FACILITY_CODE
+    facility_code = FACILITY_CODE  # Use the global facility code
 
-    # Generate issue code based on issue_code_size
-    max_issue_code = (1 << (issue_code_size * 8)) - 1  # issue_code_size is in bytes
-    issue_code = random.randint(1, max_issue_code)
+    # Generate issue code (set to a fixed value or randomly)
+    issue_code = random.randint(1, 9999)  # Example: 4-digit issue code
 
     # Prepare the current and expiration times
     active_on = datetime.datetime.utcnow().isoformat() + "Z"
@@ -537,7 +539,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "EncodedCardNumber": int(card_number),
                 "DisplayCardNumber": str(card_number),
                 "FacilityCode": int(facility_code),
-                "IssueCode": int(issue_code),
+                "IssueCode": int(issue_code),  # Use generated IssueCode
                 "CardFormatKey": selected_card_format.get("Key"),
                 "ActiveOn": active_on,
                 "ExpiresOn": expires_on,
@@ -600,7 +602,24 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         db.session.add(user)
         db.session.commit()
 
-        return user
+        # Generate Unlock Token and Link
+        unlock_token_str = generate_unlock_token(user.id)
+        unlock_link = create_unlock_link(unlock_token_str)
+
+        # Send SMS with Unlock Link
+        sms_sent = send_sms(phone_number, unlock_link)
+        if not sms_sent:
+            logger.warning(f"SMS sending failed for user '{first_name} {last_name}'.")
+
+        return unlock_link  # Return the unlock link to be included in the response
+
+    except requests.exceptions.HTTPError as http_err:
+        if response.status_code == 400:
+            logger.error(f"Bad Request during user creation: {response.text}")
+        else:
+            logger.error(f"HTTP error during user creation: {http_err}")
+            logger.error(f"Response Content: {response.text}")
+        raise
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
         raise
