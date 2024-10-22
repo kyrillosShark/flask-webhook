@@ -209,13 +209,24 @@ def get_doors(base_address, access_token, instance_id):
 
     try:
         response = SESSION.get(doors_endpoint, headers=headers)
+        logger.info(f"Request URL: {response.url}")
+        logger.info(f"Request Headers: {response.request.headers}")
+        logger.info(f"Response Status Code: {response.status_code}")
+        logger.info(f"Response Content: {response.text}")
+
         response.raise_for_status()
         doors = response.json()
         logger.info(f"Retrieved {len(doors)} doors.")
         return doors
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error occurred while retrieving doors: {http_err}")
+        logger.error(f"Response Status Code: {response.status_code}")
+        logger.error(f"Response Content: {response.text}")
+        return []
     except Exception as err:
         logger.error(f"Error retrieving doors: {err}")
-        raise
+        return []
+
 
 def generate_unlock_token(user_id):
     """
