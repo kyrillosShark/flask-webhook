@@ -196,27 +196,19 @@ def get_access_token(base_address, instance_name, username, password):
 def get_doors(base_address, access_token, instance_id):
     """
     Retrieves a list of available Doors.
-
-    Returns:
-        list: List of door objects.
     """
-    doors_endpoint = f"{base_address}/api/f/{instance_id}/doors"
+    doors_endpoint = f"{base_address}/api/f/{instance_id}/doors?$top=100"
 
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
+        "Accept": "application/json"
     }
 
     try:
         response = SESSION.get(doors_endpoint, headers=headers)
-        logger.info(f"Request URL: {response.url}")
-        logger.info(f"Request Headers: {response.request.headers}")
-        logger.info(f"Response Status Code: {response.status_code}")
-        logger.info(f"Response Content: {response.text}")
-
         response.raise_for_status()
         doors = response.json()
-        logger.info(f"Retrieved {len(doors)} doors.")
+        logger.info(f"Retrieved doors: {doors}")
         return doors
     except requests.exceptions.HTTPError as http_err:
         logger.error(f"HTTP error occurred while retrieving doors: {http_err}")
