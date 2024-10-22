@@ -113,8 +113,8 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=False, nullable=False)
     phone_number = db.Column(db.String(20), unique=False, nullable=False)
     card_number = db.Column(db.Integer, unique=False, nullable=False)
-    #facility_code = db.Column(db.Integer, unique=False, nullable=False)
-    issue_code = db.Column(db.Integer, unique=False, nullable=True)
+    facility_code = db.Column(db.Integer, unique=False, nullable=False)
+    #issue_code = db.Column(db.Integer, unique=False, nullable=True)
     membership_start = db.Column(db.DateTime, nullable=False)
     membership_end = db.Column(db.DateTime, nullable=False)
 
