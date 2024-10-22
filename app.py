@@ -232,11 +232,21 @@ def get_badge_types(base_address, access_token, instance_id):
         response.raise_for_status()
 
         badge_types_data = response.json()
-        badge_types = badge_types_data.get('value', badge_types_data)
+
+        if isinstance(badge_types_data, dict) and 'value' in badge_types_data:
+            badge_types = badge_types_data['value']
+        elif isinstance(badge_types_data, list):
+            badge_types = badge_types_data
+        else:
+            badge_types = []
+            logger.warning("Unexpected format for badge_types_data.")
+
+        logger.info(f"Retrieved {len(badge_types)} badge types.")
         return badge_types
     except Exception as err:
         logger.error(f"Error retrieving badge types: {err}")
         raise
+
 
 def create_badge_type(base_address, access_token, instance_id, badge_type_name):
     """
