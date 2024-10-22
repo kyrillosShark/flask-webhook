@@ -306,17 +306,17 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
 def generate_card_number(existing_card_numbers, facility_code=128):
     """
     Generates a unique card number following the 26-bit format with facility code 128.
-    
+
     Format specifications:
     - 26 bits total
     - Facility code: 8 bits (positions 1-8)
     - Card number: 16 bits (positions 9-24)
     - Parity bits: Even parity (0-12), Odd parity (13-25)
-    
+
     Args:
         existing_card_numbers (set): Set of existing card numbers to ensure uniqueness
         facility_code (int): Facility code (defaults to 128)
-    
+
     Returns:
         tuple: (card_number, binary_string) where card_number is the decimal number
                and binary_string is the full 26-bit format
@@ -328,29 +328,39 @@ def generate_card_number(existing_card_numbers, facility_code=128):
         if even:
             return '0' if ones_count % 2 == 0 else '1'
         return '1' if ones_count % 2 == 0 else '0'
-    
+
     while True:
         # Generate 5-digit card number (00000-99999)
-        card_number = random.randint(0, 65636)  # Ensures a 5-digit number
+        card_number = random.randint(0, 99999)  # Ensures a 5-digit number
         if card_number not in existing_card_numbers:
-            # Convert facility code and card number to binary
-            facility_binary = format(facility_code, '08b')  # 8 bits
-            card_binary = format(card_number, '016b')      # 16 bits
-            
+            # Debug: Verify facility_code is integer
+            logger.debug(f"Facility Code Type: {type(facility_code)}, Value: {facility_code}")
+
+            try:
+                # Convert facility code and card number to binary
+                facility_binary = format(facility_code, '08b')  # 8 bits
+                card_binary = format(card_number, '016b')      # 16 bits
+            except ValueError as ve:
+                logger.error(f"Error formatting Facility Code: {ve}")
+                raise
+
             # Combine facility code and card number
             data_bits = facility_binary + card_binary
-            
+
             # Calculate even parity for first 13 bits
             even_parity = calculate_parity(data_bits, 0, 13, even=True)
-            
+
             # Calculate odd parity for last 13 bits
             odd_parity = calculate_parity(data_bits, 13, 13, even=False)
-            
+
             # Construct final 26-bit string
             final_binary = even_parity + data_bits + odd_parity
-            
-            return card_number, final_binary
 
+            # Debug logs
+            logger.debug(f"Generated Card Number: {card_number}, Facility Code: {facility_code}")
+            logger.debug(f"Final Binary String: {final_binary}")
+
+            return card_number, final_binary
 
 def decode_card_format(binary_string):
     """
