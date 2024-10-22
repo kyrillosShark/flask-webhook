@@ -439,9 +439,12 @@ def generate_unique_card_number(base_address, access_token, instance_id):
 
 def is_card_number_unique(base_address, access_token, instance_id, card_number):
     """
-    Checks if the card number is already assigned to another person.
+    Checks if the card number with facility code is already assigned.
     """
-    endpoint = f"{base_address}/api/f/{instance_id}/Cards?$filter=EncodedCardNumber eq {card_number}"
+    facility_code = 111  # Use the same facility code
+    filter_query = f"EncodedCardNumber eq {card_number} and FacilityCode eq {facility_code}"
+    encoded_filter_query = quote_plus(filter_query)
+    endpoint = f"{base_address}/api/f/{instance_id}/cards?$filter={encoded_filter_query}"
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Accept": "application/json"
@@ -451,8 +454,14 @@ def is_card_number_unique(base_address, access_token, instance_id, card_number):
         response.raise_for_status()
         cards = response.json().get('value', [])
         is_unique = len(cards) == 0
-        logger.info(f"Card number {card_number} is {'unique' if is_unique else 'not unique'}")
+        logger.info(f"Card number {card_number} with facility code {facility_code} is {'unique' if is_unique else 'not unique'}")
         return is_unique
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error during card number uniqueness check: {http_err}")
+        logger.error(f"Response Status Code: {response.status_code}")
+        logger.error(f"Response Content: {response.text}")
+        # Return False to avoid assigning potentially duplicate card numbers
+        return False
     except Exception as e:
         logger.error(f"Error checking card number uniqueness: {e}")
         # Return False to avoid assigning potentially duplicate card numbers
