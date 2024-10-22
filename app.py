@@ -314,12 +314,6 @@ def generate_card_number():
     return card_number
 
 def get_access_levels(base_address, access_token, instance_id):
-    """
-    Retrieves a list of all available Access Levels.
-
-    Returns:
-        list: List of access level objects.
-    """
     access_levels_endpoint = f"{base_address}/api/f/{instance_id}/accesslevels"
 
     headers = {
@@ -331,12 +325,24 @@ def get_access_levels(base_address, access_token, instance_id):
         response = SESSION.get(access_levels_endpoint, headers=headers)
         response.raise_for_status()
         access_levels_data = response.json()
-        access_levels = access_levels_data.get('value', access_levels_data)
+
+        # Handle both list and dict responses
+        if isinstance(access_levels_data, dict):
+            access_levels = access_levels_data.get('value', [])
+            if not access_levels:
+                logger.warning("No access levels found under 'value' key.")
+        elif isinstance(access_levels_data, list):
+            access_levels = access_levels_data
+        else:
+            logger.error("Unexpected data format for access levels.")
+            access_levels = []
+
         logger.info(f"Retrieved {len(access_levels)} access levels.")
         return access_levels
     except Exception as err:
         logger.error(f"Error retrieving access levels: {err}")
         raise
+
 
 def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours, issue_code_size):
     """
