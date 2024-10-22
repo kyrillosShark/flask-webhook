@@ -302,7 +302,7 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
     raise Exception(f"Badge Type '{badge_type_name}' not found after creation.")
 
 
-def generate_formatted_card_number(existing_card_numbers, facility_code=111):
+def generate_card_number(existing_card_numbers, facility_code=111):
     """
     Generates a unique card number following the 26-bit format with facility code 111.
     
