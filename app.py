@@ -350,6 +350,7 @@ def generate_card_number(existing_card_numbers, facility_code=111):
             
             return card_number, final_binary
 
+
 def decode_card_format(binary_string):
     """
     Decodes a 26-bit card format string into its components.
