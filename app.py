@@ -6,9 +6,8 @@ import random
 import base64
 import logging
 import threading
-import datetime
 
-
+from datetime import datetime, timedelta, timezone  # Updated import
 from flask import Flask, request, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -44,7 +43,6 @@ KEEP_PASSWORD = os.getenv("KEEP_PASSWORD")
 BADGE_TYPE_NAME = os.getenv("BADGE_TYPE_NAME", "Employee Badge")
 SIMULATION_REASON = os.getenv("SIMULATION_REASON", "Automated Testing of Card Read")
 FACILITY_CODE = int(os.getenv("FACILITY_CODE", "128"))  # 128 as integer
- # '00000111'  # Set your facility code here
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
@@ -114,26 +112,27 @@ class User(db.Model):
     phone_number = db.Column(db.String(20), unique=False, nullable=False)
     card_number = db.Column(db.Integer, unique=False, nullable=False)
     facility_code = db.Column(db.Integer, unique=False, nullable=False)
-    #issue_code = db.Column(db.Integer, unique=False, nullable=True)
-    membership_start = db.Column(db.DateTime, nullable=False)
+    # issue_code = db.Column(db.Integer, unique=False, nullable=True)  # Removed
+    
+    membership_start = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)  # Updated
     membership_end = db.Column(db.DateTime, nullable=False)
 
     def is_membership_active(self):
-        now = datetime.datetime.utcnow()
+        now = datetime.utcnow()  # Updated
         return self.membership_start <= now <= self.membership_end
 
 class UnlockToken(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     token = db.Column(db.String(36), unique=False, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)  # Updated
     expires_at = db.Column(db.DateTime, nullable=False)
     used = db.Column(db.Boolean, default=False)
 
     user = db.relationship('User', backref=db.backref('unlock_tokens', lazy=True))
 
     def is_valid(self):
-        now = datetime.datetime.utcnow()
+        now = datetime.utcnow()  # Updated
         return not self.used and now < self.expires_at and self.user.is_membership_active()
 
 # ----------------------------
@@ -302,7 +301,6 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
 
     raise Exception(f"Badge Type '{badge_type_name}' not found after creation.")
 
-
 def generate_card_number(existing_card_numbers, facility_code=128):
     """
     Generates a unique card number following the 26-bit format with facility code 128.
@@ -395,15 +393,14 @@ def verify_parity(binary_string):
     ones_count_even = first_half.count('1')
     even_parity_correct = (ones_count_even % 2 == 0 and binary_string[0] == '0') or \
                          (ones_count_even % 2 == 1 and binary_string[0] == '1')
-    
+
     # Verify odd parity (last 13 bits)
     second_half = binary_string[13:25]  # Skip the parity bit itself
     ones_count_odd = second_half.count('1')
     odd_parity_correct = (ones_count_odd % 2 == 0 and binary_string[25] == '1') or \
                         (ones_count_odd % 2 == 1 and binary_string[25] == '0')
-    
-    return even_parity_correct and odd_parity_correct
 
+    return even_parity_correct and odd_parity_correct
 
 def get_access_levels(base_address, access_token, instance_id):
     access_levels_endpoint = f"{base_address}/api/f/{instance_id}/accesslevels"
@@ -434,6 +431,7 @@ def get_access_levels(base_address, access_token, instance_id):
     except Exception as err:
         logger.error(f"Error retrieving access levels: {err}")
         raise
+
 def get_existing_card_numbers(base_address, access_token, instance_id):
     """
     Retrieves all existing card numbers to ensure uniqueness.
@@ -588,8 +586,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     facility_code = FACILITY_CODE  # Integer 128
 
     # Prepare active and expiration times
-    active_on = datetime.utcnow().isoformat() + "Z"
-    expires_on = (datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat() + "Z"
+    active_on = datetime.utcnow().isoformat() + "Z"  # Updated
+    expires_on = (datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat() + "Z"  # Updated
 
     # Retrieve the access level named 'Access'
     access_levels = get_access_levels(base_address, access_token, instance_id)
@@ -708,7 +706,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         logger.info(f"Assigned Card Number: {card_number}, Facility Code: {facility_code}")
 
         # Create User in local database
-        membership_start = datetime.utcnow()
+        membership_start = datetime.utcnow()  # Updated
         membership_end = membership_start + timedelta(hours=membership_duration_hours)
 
         user = User(
@@ -751,7 +749,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         logger.error(f"Error during user creation: {err}")
         raise
 
-def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number, issue_code):
+def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number):
     """
     Simulates a card read by publishing a simulateCardRead event.
 
@@ -764,9 +762,8 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     try:
         card_number_int = int(card_number)
         facility_code_int = int(facility_code)
-        issue_code_int = int(issue_code) if issue_code else None
     except ValueError as e:
-        logger.error(f"Invalid card number, facility code, or issue code: {e}")
+        logger.error(f"Invalid card number or facility code: {e}")
         return False
 
     # Construct EventData
@@ -775,10 +772,6 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         "FacilityCode": facility_code_int,
         "EncodedCardNumber": card_number_int,
     }
-
-    # Include IssueCode if available
-    if issue_code_int is not None:
-        event_data["IssueCode"] = issue_code_int
 
     logger.info(f"Event Data before encoding: {event_data}")
 
@@ -791,7 +784,7 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     # Construct the payload
     payload = {
         "$type": "Feenics.Keep.WebApi.Model.EventMessagePosting, Feenics.Keep.WebApi.Model",
-        "OccurredOn": datetime.datetime.now(timezone.utc).isoformat() + "Z",
+        "OccurredOn": datetime.now(timezone.utc).isoformat() + "Z",  # Updated
         "AppKey": "MercuryCommands",
         "EventTypeMoniker": {
             "$type": "Feenics.Keep.WebApi.Model.MonikerItem, Feenics.Keep.WebApi.Model",
@@ -851,7 +844,7 @@ def generate_unlock_token(user_id):
     Generates a unique unlock token for the user and saves it to the database.
     """
     token_str = str(uuid.uuid4())
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)  # Token valid for 15 minutes
+    expires_at = datetime.utcnow() + timedelta(minutes=15)  # Token valid for 15 minutes  # Updated
 
     with app.app_context():
         user = User.query.get(user_id)
@@ -939,6 +932,9 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 logger.info(f"User with email {email} already exists.")
                 # Generate a new unlock link for the existing user
                 unlock_token_str = generate_unlock_token(existing_user.id)
+                if not unlock_token_str:
+                    logger.error("Failed to generate unlock token for existing user.")
+                    return None
                 unlock_link = create_unlock_link(unlock_token_str)
                 sms_sent = send_sms(phone_number, unlock_link)
                 if not sms_sent:
@@ -965,7 +961,6 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
         logger.exception(f"Error in processing user creation: {e}")
         return None
 
-
 # ----------------------------
 # Unlock Token Management
 # ----------------------------
@@ -983,7 +978,7 @@ def validate_unlock_token(token):
         if unlock_token.used:
             return False, "Token has already been used."
 
-        if datetime.datetime.utcnow() >= unlock_token.expires_at:
+        if datetime.utcnow() >= unlock_token.expires_at:  # Updated
             return False, "Token has expired."
 
         if not unlock_token.user.is_membership_active():
@@ -1009,7 +1004,6 @@ def reset_database():
         return jsonify({'error': 'Failed to reset database'}), 500
 
 @app.route('/webhook', methods=['POST'])
-@app.route('/webhook', methods=['POST'])
 def handle_webhook():
     data = request.json
     logger.info(f"Received webhook data: {data}")
@@ -1033,8 +1027,6 @@ def handle_webhook():
 
     return jsonify({'status': 'User creation in progress'}), 200
 
-
-@app.route('/unlock', methods=['GET'])
 @app.route('/unlock', methods=['GET'])
 def handle_unlock():
     token = request.args.get('token')
@@ -1057,17 +1049,16 @@ def handle_unlock():
 
     card_number = unlock_token.user.card_number
     facility_code = unlock_token.user.facility_code
-    issue_code = unlock_token.user.issue_code
+    # issue_code = unlock_token.user.issue_code  # Removed
 
-    logger.info(f"Simulating unlock for card number: {card_number}, facility code: {facility_code}, issue_code: {issue_code}")
+    logger.info(f"Simulating unlock for card number: {card_number}, facility code: {facility_code}")  # Removed issue_code
 
     # Simulate the card read in a separate thread to avoid blocking
-    threading.Thread(target=simulate_unlock, args=(card_number, facility_code, issue_code)).start()
+    threading.Thread(target=simulate_unlock, args=(card_number, facility_code)).start()  # Removed issue_code
 
     return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
 
-
-def simulate_unlock(card_number, facility_code, issue_code):
+def simulate_unlock(card_number, facility_code):
     """
     Simulates the card read to unlock the door.
     """
@@ -1128,8 +1119,8 @@ def simulate_unlock(card_number, facility_code, issue_code):
                 controller=controller,
                 reason=SIMULATION_REASON,
                 facility_code=facility_code,
-                card_number=card_number_str,
-                issue_code=issue_code
+                card_number=card_number_str
+                # issue_code is removed
             )
 
             if success:
@@ -1139,9 +1130,6 @@ def simulate_unlock(card_number, facility_code, issue_code):
 
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
-
-
-
 
 # ----------------------------
 # Main Execution
