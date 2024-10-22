@@ -302,9 +302,9 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
     raise Exception(f"Badge Type '{badge_type_name}' not found after creation.")
 
 
-def generate_card_number(existing_card_numbers, facility_code=111):
+def generate_card_number(existing_card_numbers, facility_code=128):
     """
-    Generates a unique card number following the 26-bit format with facility code 111.
+    Generates a unique card number following the 26-bit format with facility code 128.
     
     Format specifications:
     - 26 bits total
@@ -314,7 +314,7 @@ def generate_card_number(existing_card_numbers, facility_code=111):
     
     Args:
         existing_card_numbers (set): Set of existing card numbers to ensure uniqueness
-        facility_code (int): Facility code (defaults to 111)
+        facility_code (int): Facility code (defaults to 128)
     
     Returns:
         tuple: (card_number, binary_string) where card_number is the decimal number
@@ -329,8 +329,8 @@ def generate_card_number(existing_card_numbers, facility_code=111):
         return '1' if ones_count % 2 == 0 else '0'
     
     while True:
-        # Generate 16-bit card number (max value 65535)
-        card_number = random.randint(0, 65535)
+        # Generate 5-digit card number (00000-99999)
+        card_number = random.randint(0, 65636)  # Ensures a 5-digit number
         if card_number not in existing_card_numbers:
             # Convert facility code and card number to binary
             facility_binary = format(facility_code, '08b')  # 8 bits
@@ -737,7 +737,6 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
         raise
-
 
 
 def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number, issue_code):
