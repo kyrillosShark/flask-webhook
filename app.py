@@ -320,72 +320,36 @@ def unlock_door(user, duration_seconds=3):
 def send_unlock_door_command(base_address, access_token, instance_id, door, duration_seconds, user):
     """
     Sends a door unlock command to the specified door, including user's information in the event data.
-
-    Returns:
-        bool: True if successful, False otherwise.
     """
-    event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
+    command_endpoint = f"{base_address}/api/f/{instance_id}/mercury/commands"
 
-    # Prepare EventData with user's information
-    event_data = {
-        "Duration": duration_seconds,
-        "UserFirstName": user.first_name,
-        "UserLastName": user.last_name,
-        "UserEmail": user.email,
-        "UserPhone": user.phone_number
-    }
-
-    logger.info(f"Event Data before encoding: {event_data}")
-
-    # Convert EventData to BSON and then to Base64
-    try:
-        event_data_bson = BSON.encode(event_data)
-        event_data_base64 = base64.b64encode(event_data_bson).decode('utf-8')
-    except Exception as e:
-        logger.error(f"Error encoding EventData: {e}")
-        return False
-
-    logger.info(f"EventDataBsonBase64: {event_data_base64}")
-
-    # Construct the payload
+    # Prepare the payload as per the API documentation
     payload = {
-        "$type": "Feenics.Keep.WebApi.Model.EventMessagePosting, Feenics.Keep.WebApi.Model",
-        "OccurredOn": datetime.datetime.now(timezone.utc).isoformat(),
-        "AppKey": "MercuryCommands",
-        "EventTypeMoniker": {
-            "$type": "Feenics.Keep.WebApi.Model.MonikerItem, Feenics.Keep.WebApi.Model",
-            "Namespace": "MercuryServiceCommands",
-            "Nickname": "mercury:command-unlockDoor"
-        },
-        "RelatedObjects": [
-            {
-                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
-                "Href": door['Href'],
-                "LinkedObjectKey": door['Key'],
-                "CommonName": door['CommonName'],
-                "Relation": "Door",
-                "MetaDataBson": None
-            }
-        ],
-        "EventDataBsonBase64": event_data_base64
+        "Command": "UnlockDoor",
+        "Parameters": {
+            "DoorKey": door['Key'],
+            "Duration": duration_seconds
+        }
     }
 
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Accept": "application/json"
     }
 
     try:
-        response = SESSION.post(event_endpoint, headers=headers, json=payload)
+        response = SESSION.post(command_endpoint, headers=headers, json=payload)
         response.raise_for_status()
-        logger.info("Door unlock event published successfully.")
+        logger.info("Door unlock command sent successfully.")
         return True
     except requests.exceptions.HTTPError as http_err:
-        logger.error(f"HTTP error during event publishing: {http_err}")
+        logger.error(f"HTTP error during command execution: {http_err}")
+        logger.error(f"Response Status Code: {response.status_code}")
         logger.error(f"Response Content: {response.text}")
         return False
     except Exception as err:
-        logger.error(f"Error during event publishing: {err}")
+        logger.error(f"Error during command execution: {err}")
         return False
 
 def is_valid_email(email):
