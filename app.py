@@ -572,12 +572,12 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     # Fetch existing card numbers to ensure uniqueness
     existing_card_numbers = get_existing_card_numbers(base_address, access_token, instance_id)
 
-    # Generate unique 16-digit card number
-    card_number, _ = generate_card_number(existing_card_numbers)  # Unpack the tuple
-    facility_code = FACILITY_CODE  # Already zero-padded to 8 digits
+    # Generate unique 5-digit card number
+    card_number, _ = generate_card_number(existing_card_numbers, facility_code=128)  # Unpack the tuple
+    facility_code = FACILITY_CODE  # Already set to '128' via environment variable
 
-    # Set issue code to 0 as per the card format
-    issue_code = 0
+    # Since IssueCodeLength is 0, do not set issue_code
+    # issue_code = 0  # Removed
 
     # Prepare active and expiration times
     active_on = datetime.datetime.utcnow().isoformat() + "Z"
@@ -611,14 +611,15 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         logger.error("No card formats found.")
         raise Exception("No card formats available for assignment.")
 
-    # Select the card format with CommonName '111'
-    selected_card_format = next((cf for cf in card_formats if cf.get('CommonName') == '111'), None)
+    # Select the card format with CommonName '128'
+    selected_card_format = next((cf for cf in card_formats if cf.get('CommonName') == '128'), None)
     if not selected_card_format:
-        logger.error("Card format '111' not found.")
-        raise Exception("Card format '111' is required for card assignment.")
+        logger.error("Card format '128' not found.")
+        raise Exception("Card format '128' is required for card assignment.")
 
     logger.info(f"Selected Card Format: {selected_card_format}")
 
+    # Construct user data without IssueCode
     user_data = {
         "$type": "Feenics.Keep.WebApi.Model.PersonInfo, Feenics.Keep.WebApi.Model",
         "CommonName": f"{first_name} {last_name}",
@@ -649,10 +650,10 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         "CardAssignments": [
             {
                 "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
-                "EncodedCardNumber": card_number,  # Now card_number is an integer within 5 digits
-                "DisplayCardNumber": str(card_number).zfill(5),  # Ensure it's a 5-digit string
-                "FacilityCode": int(facility_code),       # Convert back to int
-                "IssueCode": issue_code,                 # 0 as per format
+                "EncodedCardNumber": card_number,  # Integer within 5 digits
+                "DisplayCardNumber": str(card_number).zfill(5),  # 5-digit string
+                "FacilityCode": int(facility_code),       # 128
+                # "IssueCode": issue_code,                 # Omitted
                 "CardFormatKey": selected_card_format.get("Key"),
                 "ActiveOn": active_on,
                 "ExpiresOn": expires_on,
@@ -666,9 +667,9 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "$type": "Feenics.Keep.WebApi.Model.MetadataItem, Feenics.Keep.WebApi.Model",
                 "Application": "CustomApp",
                 "Values": json.dumps({
-                    "CardNumber": str(card_number).zfill(5),  # Updated to 5 digits
+                    "CardNumber": str(card_number).zfill(5),  # 5-digit string
                     "FacilityCode": facility_code,
-                    "IssueCode": str(issue_code)
+                    # "IssueCode": str(issue_code)  # Omitted
                 }),
                 "ShouldPublishUpdateEvents": False
             }
@@ -694,7 +695,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             raise Exception("User ID not found in the response.")
 
         logger.info(f"User '{first_name} {last_name}' created successfully with ID: {user_id}")
-        logger.info(f"Assigned Card Number: {card_number}, Facility Code: {facility_code}, Issue Code: {issue_code}")
+        logger.info(f"Assigned Card Number: {card_number}, Facility Code: {facility_code}")
 
         # Create User in local database
         membership_start = datetime.datetime.utcnow()
@@ -707,7 +708,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             phone_number=phone_number,
             card_number=card_number,  # Store as integer
             facility_code=int(facility_code),
-            issue_code=issue_code,
+            # issue_code=issue_code,      # Omitted
             membership_start=membership_start,
             membership_end=membership_end
         )
