@@ -572,7 +572,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     existing_card_numbers = get_existing_card_numbers(base_address, access_token, instance_id)
 
     # Generate unique 16-digit card number
-    card_number = generate_card_number(existing_card_numbers)
+    card_number, _ = generate_card_number(existing_card_numbers)  # Unpack the tuple
     facility_code = FACILITY_CODE  # Already zero-padded to 8 digits
 
     # Set issue code to 0 as per the card format
@@ -648,8 +648,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         "CardAssignments": [
             {
                 "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
-                "EncodedCardNumber": int(card_number),  # Ensure card_number is all digits
-                "DisplayCardNumber": card_number,        # Already a 16-digit string
+                "EncodedCardNumber": int(card_number),  # Now card_number is an integer
+                "DisplayCardNumber": str(card_number).zfill(16),  # Ensure it's a 16-digit string
                 "FacilityCode": int(facility_code),       # Convert back to int
                 "IssueCode": issue_code,                 # 0 as per format
                 "CardFormatKey": selected_card_format.get("Key"),
@@ -735,6 +735,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
         raise
+
 
 def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number, issue_code):
     """
