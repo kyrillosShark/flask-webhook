@@ -220,7 +220,6 @@ def get_doors(base_address, access_token, instance_id):
         logger.error(f"Error retrieving doors: {err}")
         return []
 
-
 def generate_unlock_token(user_id):
     """
     Generates a unique unlock token for the user and saves it to the database.
@@ -278,7 +277,7 @@ def send_sms(phone_number, unlock_link):
 
 def unlock_door(user, duration_seconds=3):
     """
-    Sends a command to unlock the door for duration_seconds seconds.
+    Simulates a card read for the user to unlock the door.
     """
     try:
         with app.app_context():
@@ -290,46 +289,59 @@ def unlock_door(user, duration_seconds=3):
                 password=KEEP_PASSWORD
             )
 
-            # Step 2: Retrieve Doors
-            doors = get_doors(BASE_ADDRESS, access_token, instance_id)
-            if not doors:
-                logger.error("No doors found.")
+            # Step 2: Create Person
+            person = create_person(BASE_ADDRESS, access_token, instance_id, user)
+
+            if not person:
+                logger.error("Failed to create person.")
                 return
 
-            # Select the door to unlock (modify as needed)
-            door = doors[0]
-            logger.info(f"Selected Door: {door.get('CommonName')}")
+            # Step 3: Assign Card to Person
+            card_assignment = assign_card_to_person(BASE_ADDRESS, access_token, instance_id, person)
 
-            # Step 3: Send Unlock Door Command
-            success = send_unlock_door_command(
+            if not card_assignment:
+                logger.error("Failed to assign card to person.")
+                return
+
+            # Step 4: Simulate Card Read
+            success = simulate_card_read(
                 base_address=BASE_ADDRESS,
                 access_token=access_token,
                 instance_id=instance_id,
-                door=door,
-                duration_seconds=duration_seconds,
+                card_assignment=card_assignment,
                 user=user
             )
 
             if success:
-                logger.info("Door unlock command sent successfully.")
+                logger.info("Card read simulated successfully.")
             else:
-                logger.error("Door unlock command failed.")
+                logger.error("Failed to simulate card read.")
 
     except Exception as e:
         logger.exception(f"Error in unlocking door: {e}")
 
-def send_unlock_door_command(base_address, access_token, instance_id, door, duration_seconds, user):
+def create_person(base_address, access_token, instance_id, user):
     """
-    Sends a door unlock command to the specified door.
+    Creates a new person in the Keep by Feenics system.
     """
-    command_endpoint = f"{base_address}/api/f/{instance_id}/mercury/commands"
+    person_endpoint = f"{base_address}/api/f/{instance_id}/People"
 
     payload = {
-        "Command": "Pulse",
-        "Parameters": {
-            "DoorKey": door['Key'],
-            "PulseTime": duration_seconds
-        }
+        "GivenName": user.first_name,
+        "Surname": user.last_name,
+        "CommonName": f"{user.first_name} {user.last_name}",
+        "Addresses": [
+            {
+                "$type": "Feenics.Keep.WebApi.Model.EmailAddressInfo, Feenics.Keep.WebApi.Model",
+                "MailTo": user.email,
+                "Type": "Work"
+            },
+            {
+                "$type": "Feenics.Keep.WebApi.Model.PhoneInfo, Feenics.Keep.WebApi.Model",
+                "Number": user.phone_number,
+                "Type": "Mobile"
+            }
+        ]
     }
 
     headers = {
@@ -339,17 +351,141 @@ def send_unlock_door_command(base_address, access_token, instance_id, door, dura
     }
 
     try:
-        response = SESSION.post(command_endpoint, headers=headers, json=payload)
+        response = SESSION.post(person_endpoint, headers=headers, json=payload)
         response.raise_for_status()
-        logger.info("Door unlock command sent successfully.")
+        person = response.json()
+        logger.info(f"Created person: {person}")
+        return person
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error during person creation: {http_err}")
+        logger.error(f"Response Status Code: {response.status_code}")
+        logger.error(f"Response Content: {response.text}")
+        return None
+    except Exception as err:
+        logger.error(f"Error during person creation: {err}")
+        return None
+
+def assign_card_to_person(base_address, access_token, instance_id, person):
+    """
+    Assigns a card to the person.
+    """
+    cards_endpoint = f"{base_address}/api/f/{instance_id}/People/{person['Key']}/Cards"
+
+    # Generate a unique card number (for demonstration purposes)
+    card_number = random.randint(1000000000, 9999999999)
+
+    payload = {
+        "EncodedCardNumber": card_number,
+        "DisplayCardNumber": str(card_number),
+        "ActiveOn": datetime.datetime.utcnow().isoformat() + "Z",
+        "ExpiresOn": (datetime.datetime.utcnow() + timedelta(days=365)).isoformat() + "Z",
+        "AntiPassbackExempt": False,
+        "ExtendedAccess": False,
+        "PinExempt": False,
+        "IsDisabled": False,
+        "ManagerLevel": 0,
+        "CurrentUseCount": 0
+    }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+
+    try:
+        response = SESSION.post(cards_endpoint, headers=headers, json=payload)
+        response.raise_for_status()
+        card_assignment = response.json()
+        logger.info(f"Assigned card to person: {card_assignment}")
+        return card_assignment
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error during card assignment: {http_err}")
+        logger.error(f"Response Status Code: {response.status_code}")
+        logger.error(f"Response Content: {response.text}")
+        return None
+    except Exception as err:
+        logger.error(f"Error during card assignment: {err}")
+        return None
+
+def simulate_card_read(base_address, access_token, instance_id, card_assignment, user):
+    """
+    Simulates a card read at a specific reader.
+    """
+    # You need to specify the Controller, Reader, and CardFormat keys.
+    # Replace the placeholders below with actual keys from your system.
+
+    controller_key = "YOUR_CONTROLLER_KEY"
+    reader_key = "YOUR_READER_KEY"
+    card_format_key = "YOUR_CARD_FORMAT_KEY"
+
+    event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
+
+    # Prepare EventDataBsonBase64
+    event_data = {
+        "Reason": "Simulated card read",
+        "FacilityCode": 0,  # Update if necessary
+        "EncodedCardNumber": card_assignment['EncodedCardNumber']
+    }
+    event_data_bson = BSON.encode(event_data)
+    event_data_b64 = base64.b64encode(event_data_bson).decode('utf-8')
+
+    payload = {
+        "$type": "Feenics.Keep.WebApi.Model.EventMessagePosting, Feenics.Keep.WebApi.Model",
+        "OccurredOn": datetime.datetime.utcnow().isoformat() + "Z",
+        "AppKey": "MercuryCommands",
+        "EventTypeMoniker": {
+            "$type": "Feenics.Keep.WebApi.Model.MonikerItem, Feenics.Keep.WebApi.Model",
+            "Namespace": "MercuryServiceCommands",
+            "Nickname": "mercury:command-simulateCardRead"
+        },
+        "RelatedObjects": [
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": f"/api/f/{instance_id}/Readers/{reader_key}",
+                "LinkedObjectKey": reader_key,
+                "CommonName": "Reader",
+                "Relation": "Reader",
+                "MetaDataBson": None
+            },
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": f"/api/f/{instance_id}/CardFormats/{card_format_key}",
+                "LinkedObjectKey": card_format_key,
+                "CommonName": "CardFormat",
+                "Relation": "CardFormat",
+                "MetaDataBson": None
+            },
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": f"/api/f/{instance_id}/Controllers/{controller_key}",
+                "LinkedObjectKey": controller_key,
+                "CommonName": "Controller",
+                "Relation": "Controller",
+                "MetaDataBson": None
+            }
+        ],
+        "EventDataBsonBase64": event_data_b64
+    }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+
+    try:
+        response = SESSION.post(event_endpoint, headers=headers, json=payload)
+        response.raise_for_status()
+        logger.info("Simulated card read event published successfully.")
         return True
     except requests.exceptions.HTTPError as http_err:
-        logger.error(f"HTTP error during command execution: {http_err}")
+        logger.error(f"HTTP error during card read simulation: {http_err}")
         logger.error(f"Response Status Code: {response.status_code}")
         logger.error(f"Response Content: {response.text}")
         return False
     except Exception as err:
-        logger.error(f"Error during command execution: {err}")
+        logger.error(f"Error during card read simulation: {err}")
         return False
 
 def is_valid_email(email):
@@ -509,11 +645,11 @@ def handle_unlock():
 
         logger.info(f"Unlocking door for user: {user.first_name} {user.last_name}, Email: {user.email}, Phone: {user.phone_number}")
 
-        # Unlock the door in a separate thread to avoid blocking
-        threading.Thread(target=unlock_door, args=(user, 3)).start()  # Unlock for 3 seconds
+        # Unlock the door by simulating a card read
+        threading.Thread(target=unlock_door, args=(user, 3)).start()  # Duration is not used in this context
 
         # Render a success page or message
-        return render_template('unlock.html', message='Door is unlocking for 3 seconds. Please wait...')
+        return render_template('unlock.html', message='Simulating card read. Please wait...')
 
 # ----------------------------
 # Main Execution
