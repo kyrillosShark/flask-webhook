@@ -453,40 +453,42 @@ def get_controllers(base_address, access_token, instance_id):
 
 def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours, issue_code_size):
     """
-    Creates a new user in the Keep by Feenics system with access to all access levels.
-
-    Returns:
-        User: The created User object.
+    Creates a new user in the Keep by Feenics system with the 'Access' access level.
     """
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
     card_number = generate_card_number()
-    facility_code = FACILITY_CODE  # Use the global facility code
+    facility_code = FACILITY_CODE
 
     # Generate issue code based on issue_code_size
-    max_issue_code = (1 << (issue_code_size * 4)) - 1  # Calculate max value based on size in bytes
+    max_issue_code = (1 << (issue_code_size * 8)) - 1  # issue_code_size is in bytes
     issue_code = random.randint(1, max_issue_code)
 
     # Prepare the current and expiration times
     active_on = datetime.datetime.utcnow().isoformat() + "Z"
     expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat() + "Z"
 
-    # Retrieve all access levels
+    # Retrieve the access level named 'Access'
     access_levels = get_access_levels(base_address, access_token, instance_id)
     if not access_levels:
         logger.error("No access levels found.")
         raise Exception("No access levels available to assign to the user.")
 
-    # Prepare Access Level Assignments
-    access_level_assignments = []
-    for al in access_levels:
-        assignment = {
+    # Find the access level with CommonName 'Access'
+    access_level = next((al for al in access_levels if al.get('CommonName') == 'Access'), None)
+    if not access_level:
+        logger.error("Access level 'Access' not found.")
+        raise Exception("Access level 'Access' is required for user assignment.")
+
+    # Prepare Access Level Assignment
+    access_level_assignments = [
+        {
             "$type": "Feenics.Keep.WebApi.Model.AccessLevelAssignmentInfo, Feenics.Keep.WebApi.Model",
-            "AccessLevelKey": al.get("Key"),
+            "AccessLevelKey": access_level.get("Key"),
             "ActiveOn": active_on,
             "ExpiresOn": expires_on
         }
-        access_level_assignments.append(assignment)
+    ]
 
     # Retrieve card formats
     card_formats = get_card_formats(base_address, access_token, instance_id)
@@ -496,7 +498,6 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
 
     # Select the card format with CommonName '111'
     selected_card_format = next((cf for cf in card_formats if cf.get('CommonName') == '111'), None)
-
     if not selected_card_format:
         logger.error("Card format '111' not found.")
         raise Exception("Card format '111' is required for card assignment.")
@@ -536,7 +537,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "EncodedCardNumber": int(card_number),
                 "DisplayCardNumber": str(card_number),
                 "FacilityCode": int(facility_code),
-                "IssueCode": int(issue_code),  # Use generated IssueCode
+                "IssueCode": int(issue_code),
                 "CardFormatKey": selected_card_format.get("Key"),
                 "ActiveOn": active_on,
                 "ExpiresOn": expires_on,
@@ -565,6 +566,9 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     }
 
     try:
+        # Log the user data payload for debugging
+        logger.debug(f"User Data Payload: {json.dumps(user_data, indent=2)}")
+
         response = SESSION.post(create_person_endpoint, headers=headers, json=user_data)
         response.raise_for_status()
 
@@ -579,16 +583,16 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
 
         # Create User in local database
         membership_start = datetime.datetime.utcnow()
-        membership_end = membership_start + timedelta(hours=membership_duration_hours)  # Customizable duration
+        membership_end = membership_start + timedelta(hours=membership_duration_hours)
 
         user = User(
             first_name=first_name,
             last_name=last_name,
             email=email,
             phone_number=phone_number,
-            card_number=card_number,  # Stored as integer
+            card_number=card_number,
             facility_code=facility_code,
-            issue_code=issue_code,     # Store issue code
+            issue_code=issue_code,
             membership_start=membership_start,
             membership_end=membership_end
         )
