@@ -43,7 +43,8 @@ KEEP_USERNAME = os.getenv("KEEP_USERNAME")
 KEEP_PASSWORD = os.getenv("KEEP_PASSWORD")
 BADGE_TYPE_NAME = os.getenv("BADGE_TYPE_NAME", "Employee Badge")
 SIMULATION_REASON = os.getenv("SIMULATION_REASON", "Automated Testing of Card Read")
-FACILITY_CODE = os.getenv("FACILITY_CODE", "111").zfill(8)  # '00000111'  # Set your facility code here
+FACILITY_CODE = int(os.getenv("FACILITY_CODE", "128"))  # 128 as integer
+ # '00000111'  # Set your facility code here
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
