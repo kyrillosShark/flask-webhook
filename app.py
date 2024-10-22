@@ -8,7 +8,6 @@ import logging
 import threading
 import datetime
 from datetime import timezone, timedelta
-from urllib.parse import quote_plus
 
 from flask import Flask, request, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
@@ -380,6 +379,78 @@ def get_card_formats(base_address, access_token, instance_id):
         logger.error(f"Error retrieving card formats: {err}")
         raise
 
+def get_readers(base_address, access_token, instance_id):
+    """
+    Retrieves a list of available Readers.
+
+    Returns:
+        list: List of reader objects.
+    """
+    readers_endpoint = f"{base_address}/api/f/{instance_id}/readers"
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = SESSION.get(readers_endpoint, headers=headers)
+        response.raise_for_status()
+        readers_data = response.json()
+
+        # Handle both dict and list responses
+        if isinstance(readers_data, dict):
+            readers = readers_data.get('value', [])
+            if not readers:
+                logger.warning("No readers found under 'value' key.")
+        elif isinstance(readers_data, list):
+            readers = readers_data
+        else:
+            logger.error("Unexpected data format for readers.")
+            readers = []
+
+        logger.info(f"Retrieved {len(readers)} readers.")
+        return readers
+    except Exception as err:
+        logger.error(f"Error retrieving readers: {err}")
+        raise
+
+def get_controllers(base_address, access_token, instance_id):
+    """
+    Retrieves a list of available Controllers.
+
+    Returns:
+        list: List of controller objects.
+    """
+    controllers_endpoint = f"{base_address}/api/f/{instance_id}/controllers"
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = SESSION.get(controllers_endpoint, headers=headers)
+        response.raise_for_status()
+        controllers_data = response.json()
+
+        # Handle both dict and list responses
+        if isinstance(controllers_data, dict):
+            controllers = controllers_data.get('value', [])
+            if not controllers:
+                logger.warning("No controllers found under 'value' key.")
+        elif isinstance(controllers_data, list):
+            controllers = controllers_data
+        else:
+            logger.error("Unexpected data format for controllers.")
+            controllers = []
+
+        logger.info(f"Retrieved {len(controllers)} controllers.")
+        return controllers
+    except Exception as err:
+        logger.error(f"Error retrieving controllers: {err}")
+        raise
+
 def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours, issue_code_size):
     """
     Creates a new user in the Keep by Feenics system with access to all access levels.
@@ -392,16 +463,13 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     card_number = generate_card_number()
     facility_code = FACILITY_CODE  # Use the global facility code
 
-    # Generate issue_code based on issue_code_size
-    if issue_code_size > 0:
-        max_issue_code = (10 ** issue_code_size) - 1
-        issue_code = random.randint(1, max_issue_code)
-    else:
-        issue_code = None
+    # Generate issue code based on issue_code_size
+    max_issue_code = (1 << (issue_code_size * 4)) - 1  # Calculate max value based on size in bytes
+    issue_code = random.randint(1, max_issue_code)
 
     # Prepare the current and expiration times
-    active_on = datetime.datetime.utcnow().isoformat()
-    expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat()
+    active_on = datetime.datetime.utcnow().isoformat() + "Z"
+    expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat() + "Z"
 
     # Retrieve all access levels
     access_levels = get_access_levels(base_address, access_token, instance_id)
@@ -426,33 +494,14 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         logger.error("No card formats found.")
         raise Exception("No card formats available for assignment.")
 
-    # Filter for HID 26-bit card formats
-    hid_26_card_formats = [cf for cf in card_formats if cf.get('FormatType') == 'HID_26_bit']
+    # Select the card format with CommonName '111'
+    selected_card_format = next((cf for cf in card_formats if cf.get('CommonName') == '111'), None)
 
-    if not hid_26_card_formats:
-        logger.error("HID 26-bit card format not found.")
-        raise Exception("HID 26-bit card format is required for card assignment.")
+    if not selected_card_format:
+        logger.error("Card format '111' not found.")
+        raise Exception("Card format '111' is required for card assignment.")
 
-    # Randomly select one HID 26-bit card format
-    selected_card_format = random.choice(hid_26_card_formats)
     logger.info(f"Selected Card Format: {selected_card_format}")
-
-    # Prepare CardAssignmentInfo
-    card_assignment = {
-        "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
-        "EncodedCardNumber": int(card_number),
-        "DisplayCardNumber": str(card_number),
-        "FacilityCode": int(facility_code),
-        "ActiveOn": active_on,
-        "ExpiresOn": expires_on,
-        "AntiPassbackExempt": False,
-        "ExtendedAccess": False,
-        "CardFormatKey": selected_card_format.get("Key")
-    }
-
-    # Include IssueCode if available
-    if issue_code is not None:
-        card_assignment["IssueCode"] = int(issue_code)
 
     user_data = {
         "$type": "Feenics.Keep.WebApi.Model.PersonInfo, Feenics.Keep.WebApi.Model",
@@ -481,7 +530,20 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "MetaDataBson": None
             }
         ],
-        "CardAssignments": [card_assignment],
+        "CardAssignments": [
+            {
+                "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
+                "EncodedCardNumber": int(card_number),
+                "DisplayCardNumber": str(card_number),
+                "FacilityCode": int(facility_code),
+                "IssueCode": int(issue_code),  # Use generated IssueCode
+                "CardFormatKey": selected_card_format.get("Key"),
+                "ActiveOn": active_on,
+                "ExpiresOn": expires_on,
+                "AntiPassbackExempt": False,
+                "ExtendedAccess": False
+            }
+        ],
         "AccessLevelAssignments": access_level_assignments,
         "Metadata": [
             {
@@ -490,7 +552,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "Values": json.dumps({
                     "CardNumber": str(card_number),
                     "FacilityCode": str(facility_code),
-                    "IssueCode": str(issue_code) if issue_code is not None else None
+                    "IssueCode": str(issue_code)
                 }),
                 "ShouldPublishUpdateEvents": False
             }
@@ -537,80 +599,6 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         return user
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
-        raise
-
-def get_readers(base_address, access_token, instance_id):
-    """
-    Retrieves a list of available Readers.
-
-    Returns:
-        list: List of reader objects.
-    """
-    readers_endpoint = f"{base_address}/api/f/{instance_id}/readers"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = SESSION.get(readers_endpoint, headers=headers)
-        response.raise_for_status()
-        readers_data = response.json()
-
-        if isinstance(readers_data, dict):
-            readers = readers_data.get('value', [])
-            if not readers:
-                logger.warning("No readers found under 'value' key.")
-        elif isinstance(readers_data, list):
-            readers = readers_data
-        else:
-            logger.error("Unexpected data format for readers.")
-            readers = []
-
-        # Log the retrieved readers for debugging
-        logger.debug(f"Readers Data: {readers_data}")
-        logger.info(f"Retrieved {len(readers)} readers.")
-        return readers
-    except Exception as err:
-        logger.error(f"Error retrieving readers: {err}")
-        raise
-
-def get_controllers(base_address, access_token, instance_id):
-    """
-    Retrieves a list of available Controllers.
-
-    Returns:
-        list: List of controller objects.
-    """
-    controllers_endpoint = f"{base_address}/api/f/{instance_id}/controllers"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = SESSION.get(controllers_endpoint, headers=headers)
-        response.raise_for_status()
-        controllers_data = response.json()
-
-        if isinstance(controllers_data, dict):
-            controllers = controllers_data.get('value', [])
-            if not controllers:
-                logger.warning("No controllers found under 'value' key.")
-        elif isinstance(controllers_data, list):
-            controllers = controllers_data
-        else:
-            logger.error("Unexpected data format for controllers.")
-            controllers = []
-
-        # Log the retrieved controllers for debugging
-        logger.debug(f"Controllers Data: {controllers_data}")
-        logger.info(f"Retrieved {len(controllers)} controllers.")
-        return controllers
-    except Exception as err:
-        logger.error(f"Error retrieving controllers: {err}")
         raise
 
 def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number, issue_code):
@@ -811,7 +799,7 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 phone_number=phone_number,
                 badge_type_info=badge_type_info,
                 membership_duration_hours=membership_duration_hours,
-                issue_code_size=issue_code_size  # Pass the issue_code_size here
+                issue_code_size=issue_code_size
             )
 
             # Step 5: Generate Unlock Token and Link
@@ -952,9 +940,10 @@ def simulate_unlock(card_number, facility_code, issue_code):
                 logger.error("No Card Formats found.")
                 return
 
-            card_format = next((cf for cf in card_formats if cf.get('CommonName') == 'HID 26-bit'), None)
+            # Select the card format with CommonName '111'
+            card_format = next((cf for cf in card_formats if cf.get('CommonName') == '111'), None)
             if not card_format:
-                logger.error("HID 26-bit Card Format not found.")
+                logger.error("Card format '111' not found.")
                 return
 
             controllers = get_controllers(BASE_ADDRESS, access_token, instance_id)
