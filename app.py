@@ -301,20 +301,96 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
 
     raise Exception(f"Badge Type '{badge_type_name}' not found after creation.")
 
-def generate_card_number(existing_card_numbers):
+
+def generate_formatted_card_number(existing_card_numbers, facility_code=111):
     """
-    Generates a unique 16-digit card number.
+    Generates a unique card number following the 26-bit format with facility code 111.
+    
+    Format specifications:
+    - 26 bits total
+    - Facility code: 8 bits (positions 1-8)
+    - Card number: 16 bits (positions 9-24)
+    - Parity bits: Even parity (0-12), Odd parity (13-25)
     
     Args:
-        existing_card_numbers (set): A set of existing card numbers to ensure uniqueness.
+        existing_card_numbers (set): Set of existing card numbers to ensure uniqueness
+        facility_code (int): Facility code (defaults to 111)
     
     Returns:
-        str: A unique 16-digit card number as a string.
+        tuple: (card_number, binary_string) where card_number is the decimal number
+               and binary_string is the full 26-bit format
     """
+    def calculate_parity(bits, start, length, even=True):
+        """Calculate parity for a section of bits"""
+        relevant_bits = bits[start:start + length]
+        ones_count = relevant_bits.count('1')
+        if even:
+            return '0' if ones_count % 2 == 0 else '1'
+        return '1' if ones_count % 2 == 0 else '0'
+    
     while True:
-        card_number = str(random.randint(0, 9999999999999999)).zfill(16)
+        # Generate 16-bit card number (max value 65535)
+        card_number = random.randint(0, 65535)
         if card_number not in existing_card_numbers:
-            return card_number
+            # Convert facility code and card number to binary
+            facility_binary = format(facility_code, '08b')  # 8 bits
+            card_binary = format(card_number, '016b')      # 16 bits
+            
+            # Combine facility code and card number
+            data_bits = facility_binary + card_binary
+            
+            # Calculate even parity for first 13 bits
+            even_parity = calculate_parity(data_bits, 0, 13, even=True)
+            
+            # Calculate odd parity for last 13 bits
+            odd_parity = calculate_parity(data_bits, 13, 13, even=False)
+            
+            # Construct final 26-bit string
+            final_binary = even_parity + data_bits + odd_parity
+            
+            return card_number, final_binary
+
+def decode_card_format(binary_string):
+    """
+    Decodes a 26-bit card format string into its components.
+    
+    Args:
+        binary_string (str): 26-bit binary string
+        
+    Returns:
+        dict: Dictionary containing decoded components
+    """
+    return {
+        'even_parity': binary_string[0],
+        'facility_code': int(binary_string[1:9], 2),
+        'card_number': int(binary_string[9:25], 2),
+        'odd_parity': binary_string[25],
+        'valid': verify_parity(binary_string)
+    }
+
+def verify_parity(binary_string):
+    """
+    Verifies both even and odd parity bits are correct.
+    
+    Args:
+        binary_string (str): 26-bit binary string
+        
+    Returns:
+        bool: True if parity bits are correct, False otherwise
+    """
+    # Verify even parity (first 13 bits)
+    first_half = binary_string[1:13]  # Skip the parity bit itself
+    ones_count_even = first_half.count('1')
+    even_parity_correct = (ones_count_even % 2 == 0 and binary_string[0] == '0') or \
+                         (ones_count_even % 2 == 1 and binary_string[0] == '1')
+    
+    # Verify odd parity (last 13 bits)
+    second_half = binary_string[13:25]  # Skip the parity bit itself
+    ones_count_odd = second_half.count('1')
+    odd_parity_correct = (ones_count_odd % 2 == 0 and binary_string[25] == '1') or \
+                        (ones_count_odd % 2 == 1 and binary_string[25] == '0')
+    
+    return even_parity_correct and odd_parity_correct
 
 
 def get_access_levels(base_address, access_token, instance_id):
