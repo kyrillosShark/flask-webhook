@@ -8,6 +8,7 @@ import logging
 import threading
 import datetime
 from datetime import timezone, timedelta
+from urllib.parse import quote_plus
 
 from flask import Flask, request, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
@@ -43,7 +44,7 @@ KEEP_USERNAME = os.getenv("KEEP_USERNAME")
 KEEP_PASSWORD = os.getenv("KEEP_PASSWORD")
 BADGE_TYPE_NAME = os.getenv("BADGE_TYPE_NAME", "Employee Badge")
 SIMULATION_REASON = os.getenv("SIMULATION_REASON", "Automated Testing of Card Read")
-FACILITY_CODE = int(os.getenv("FACILITY_CODE", 100))
+FACILITY_CODE = int(os.getenv("FACILITY_CODE", 111))  # Set your facility code here
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
@@ -113,7 +114,7 @@ class User(db.Model):
     phone_number = db.Column(db.String(20), unique=False, nullable=False)
     card_number = db.Column(db.Integer, unique=False, nullable=False)
     facility_code = db.Column(db.Integer, unique=False, nullable=False)
-    issue_code = db.Column(db.Integer, unique=False, nullable=True)  # Make nullable
+    issue_code = db.Column(db.Integer, unique=False, nullable=True)
     membership_start = db.Column(db.DateTime, nullable=False)
     membership_end = db.Column(db.DateTime, nullable=False)
 
@@ -230,7 +231,8 @@ def get_badge_types(base_address, access_token, instance_id):
         response = SESSION.get(get_badge_types_endpoint, headers=headers)
         response.raise_for_status()
 
-        badge_types = response.json()
+        badge_types_data = response.json()
+        badge_types = badge_types_data.get('value', badge_types_data)
         return badge_types
     except Exception as err:
         logger.error(f"Error retrieving badge types: {err}")
@@ -282,9 +284,6 @@ def create_badge_type(base_address, access_token, instance_id, badge_type_name):
 def get_badge_type_details(base_address, access_token, instance_id, badge_type_name):
     """
     Retrieves details of a specific Badge Type.
-
-    Returns:
-        dict: Details of the Badge Type.
     """
     badge_types = get_badge_types(base_address, access_token, instance_id)
 
@@ -321,7 +320,8 @@ def get_access_levels(base_address, access_token, instance_id):
     try:
         response = SESSION.get(access_levels_endpoint, headers=headers)
         response.raise_for_status()
-        access_levels = response.json()
+        access_levels_data = response.json()
+        access_levels = access_levels_data.get('value', access_levels_data)
         logger.info(f"Retrieved {len(access_levels)} access levels.")
         return access_levels
     except Exception as err:
@@ -341,15 +341,15 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     facility_code = FACILITY_CODE
 
     # Generate IssueCode if required
-   # if issue_code_size > 0:
-    #max_issue_code = (1 << (issue_code_size * 8)) - 1  # Calculate max value based on size in bytes
-    #issue_code = random.randint(1, max_issue_code)
-    #else:
-    issue_code = None  # IssueCode not required
+    if issue_code_size > 0:
+        max_issue_code = (1 << (issue_code_size * 8)) - 1  # Calculate max value based on size in bytes
+        issue_code = random.randint(1, max_issue_code)
+    else:
+        issue_code = None  # IssueCode not required
 
     # Prepare the current and expiration times
-    active_on = datetime.datetime.utcnow().isoformat()
-    expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat()
+    active_on = datetime.datetime.utcnow().isoformat() + "Z"
+    expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat() + "Z"
 
     # Retrieve all access levels
     access_levels = get_access_levels(base_address, access_token, instance_id)
@@ -368,6 +368,18 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         }
         access_level_assignments.append(assignment)
 
+    # Retrieve card formats
+    card_formats = get_card_formats(base_address, access_token, instance_id)
+    if not card_formats:
+        logger.error("No card formats found.")
+        raise Exception("No card formats available to assign to the card.")
+
+    # Find the HID 26-bit card format
+    hid_card_format = next((cf for cf in card_formats if cf.get("CommonName") == "HID 26-bit"), None)
+    if not hid_card_format:
+        logger.error("HID 26-bit card format not found.")
+        raise Exception("HID 26-bit card format is required for card assignment.")
+
     # Prepare Card Assignment
     card_assignment = {
         "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
@@ -376,6 +388,9 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         "FacilityCode": int(facility_code),
         "ActiveOn": active_on,
         "ExpiresOn": expires_on,
+        "CardFormat": {
+            "LinkedObjectKey": hid_card_format['Key'],
+        },
         "AntiPassbackExempt": False,
         "ExtendedAccess": False,
         "PinExempt": True,
@@ -492,7 +507,8 @@ def get_readers(base_address, access_token, instance_id):
     try:
         response = SESSION.get(readers_endpoint, headers=headers)
         response.raise_for_status()
-        readers = response.json()
+        readers_data = response.json()
+        readers = readers_data.get('value', readers_data)
         logger.info(f"Retrieved {len(readers)} readers.")
         return readers
     except Exception as err:
@@ -516,7 +532,8 @@ def get_card_formats(base_address, access_token, instance_id):
     try:
         response = SESSION.get(card_formats_endpoint, headers=headers)
         response.raise_for_status()
-        card_formats = response.json()
+        card_formats_data = response.json()
+        card_formats = card_formats_data.get('value', card_formats_data)
         logger.info(f"Retrieved {len(card_formats)} card formats.")
         return card_formats
     except Exception as err:
@@ -540,7 +557,8 @@ def get_controllers(base_address, access_token, instance_id):
     try:
         response = SESSION.get(controllers_endpoint, headers=headers)
         response.raise_for_status()
-        controllers = response.json()
+        controllers_data = response.json()
+        controllers = controllers_data.get('value', controllers_data)
         logger.info(f"Retrieved {len(controllers)} controllers.")
         return controllers
     except Exception as err:
@@ -587,7 +605,7 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     # Construct the payload
     payload = {
         "$type": "Feenics.Keep.WebApi.Model.EventMessagePosting, Feenics.Keep.WebApi.Model",
-        "OccurredOn": datetime.datetime.now(timezone.utc).isoformat(),
+        "OccurredOn": datetime.datetime.now(timezone.utc).isoformat() + "Z",
         "AppKey": "MercuryCommands",
         "EventTypeMoniker": {
             "$type": "Feenics.Keep.WebApi.Model.MonikerItem, Feenics.Keep.WebApi.Model",
@@ -635,6 +653,7 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         return True
     except requests.exceptions.HTTPError as http_err:
         logger.error(f"HTTP error during event publishing: {http_err}")
+        logger.error(f"Response Status Code: {response.status_code}")
         logger.error(f"Response Content: {response.text}")
         return False
     except Exception as err:
@@ -873,19 +892,33 @@ def simulate_unlock(card_number, facility_code, issue_code):
             if not readers:
                 logger.error("No Readers found.")
                 return
-            reader = readers[0]  # Select the first reader
+
+            # Replace 'YOUR_READER_NAME' with your actual reader name
+            reader = next((r for r in readers if r.get('CommonName') == 'YOUR_READER_NAME'), None)
+            if not reader:
+                logger.error("Specified Reader not found.")
+                return
 
             card_formats = get_card_formats(BASE_ADDRESS, access_token, instance_id)
             if not card_formats:
                 logger.error("No Card Formats found.")
                 return
-            card_format = card_formats[0]  # Select the first card format
+
+            card_format = next((cf for cf in card_formats if cf.get('CommonName') == 'HID 26-bit'), None)
+            if not card_format:
+                logger.error("HID 26-bit Card Format not found.")
+                return
 
             controllers = get_controllers(BASE_ADDRESS, access_token, instance_id)
             if not controllers:
                 logger.error("No Controllers found.")
                 return
-            controller = controllers[0]  # Select the first controller
+
+            # Replace 'YOUR_CONTROLLER_NAME' with your actual controller name
+            controller = next((c for c in controllers if c.get('CommonName') == 'YOUR_CONTROLLER_NAME'), None)
+            if not controller:
+                logger.error("Specified Controller not found.")
+                return
 
             # Simulate Card Read
             success = simulate_card_read(
@@ -908,77 +941,6 @@ def simulate_unlock(card_number, facility_code, issue_code):
 
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
-
-@app.route('/test_send_unlock_sms', methods=['GET'])
-def test_send_unlock_sms():
-    """
-    Test route to create a test user and send an unlock link via SMS.
-    """
-    try:
-        with app.app_context():
-            # Step 1: Authenticate
-            access_token, instance_id = get_access_token(
-                base_address=BASE_ADDRESS,
-                instance_name=INSTANCE_NAME,
-                username=KEEP_USERNAME,
-                password=KEEP_PASSWORD
-            )
-
-            # Step 2: Retrieve Instance Settings
-            instance_settings = get_instance_settings(BASE_ADDRESS, access_token, instance_id)
-            issue_code_size = get_issue_code_size(instance_settings)
-
-            # Step 3: Get or Create Badge Type
-            badge_types = get_badge_types(BASE_ADDRESS, access_token, instance_id)
-            badge_type_info = next((bt for bt in badge_types if bt.get("CommonName") == BADGE_TYPE_NAME), None)
-
-            if not badge_type_info:
-                logger.info(f"Badge Type '{BADGE_TYPE_NAME}' does not exist. Creating it now.")
-                badge_type_response = create_badge_type(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
-                if badge_type_response:
-                    badge_type_info = badge_type_response
-                else:
-                    # If Badge Type already exists (status code 409), retrieve its details
-                    badge_type_info = get_badge_type_details(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
-
-            # Step 4: Create a Test User
-            first_name = "Test"
-            last_name = "User"
-            email = f"test.user{random.randint(1000,9999)}@example.com"
-            phone_number = "+1234567890"  # Use a valid test number
-            membership_duration_hours = 24  # 24-hour membership for testing
-
-            # Create the user via CRM API and store in local database
-            user = create_user(
-                base_address=BASE_ADDRESS,
-                access_token=access_token,
-                instance_id=instance_id,
-                first_name=first_name,
-                last_name=last_name,
-                email=email,
-                phone_number=phone_number,
-                badge_type_info=badge_type_info,
-                membership_duration_hours=membership_duration_hours,
-                issue_code_size=issue_code_size
-            )
-
-            # Step 5: Generate Unlock Token and Link
-            unlock_token_str = generate_unlock_token(user.id)
-            unlock_link = create_unlock_link(unlock_token_str)
-
-            # Step 6: Send SMS with Unlock Link
-            send_sms(phone_number, unlock_link)
-
-        return jsonify({
-            'status': 'Test unlock link SMS sent successfully',
-            'email': email,
-            'phone_number': phone_number,
-            'unlock_link': unlock_link
-        }), 200
-
-    except Exception as e:
-        logger.exception(f"Error in test_send_unlock_sms: {e}")
-        return jsonify({'error': 'Failed to send test unlock SMS'}), 500
 
 # ----------------------------
 # Main Execution
