@@ -197,7 +197,7 @@ def get_doors(base_address, access_token, instance_id):
     """
     Retrieves a list of available Doors.
     """
-    doors_endpoint = f"{base_address}/api/f/{instance_id}/doors?$top=100"
+    doors_endpoint = f"{base_address}/api/f/{instance_id}/Doors?$top=100"
 
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -209,6 +209,7 @@ def get_doors(base_address, access_token, instance_id):
         response.raise_for_status()
         doors = response.json()
         logger.info(f"Retrieved doors: {doors}")
+        doors = doors.get('value', doors)
         return doors
     except requests.exceptions.HTTPError as http_err:
         logger.error(f"HTTP error occurred while retrieving doors: {http_err}")
@@ -319,16 +320,15 @@ def unlock_door(user, duration_seconds=3):
 
 def send_unlock_door_command(base_address, access_token, instance_id, door, duration_seconds, user):
     """
-    Sends a door unlock command to the specified door, including user's information in the event data.
+    Sends a door unlock command to the specified door.
     """
     command_endpoint = f"{base_address}/api/f/{instance_id}/mercury/commands"
 
-    # Prepare the payload as per the API documentation
     payload = {
-        "Command": "UnlockDoor",
+        "Command": "Pulse",
         "Parameters": {
             "DoorKey": door['Key'],
-            "Duration": duration_seconds
+            "PulseTime": duration_seconds
         }
     }
 
