@@ -822,7 +822,7 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 phone_number=phone_number,
                 badge_type_info=badge_type_info,
                 membership_duration_hours=membership_duration_hours,
-                issue_code_size=issue_code_size
+                #issue_code_size=issue_code_size
             )
 
             # Step 5: Generate Unlock Token and Link
