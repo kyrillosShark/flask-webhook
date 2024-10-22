@@ -43,7 +43,7 @@ KEEP_USERNAME = os.getenv("KEEP_USERNAME")
 KEEP_PASSWORD = os.getenv("KEEP_PASSWORD")
 BADGE_TYPE_NAME = os.getenv("BADGE_TYPE_NAME", "Employee Badge")
 SIMULATION_REASON = os.getenv("SIMULATION_REASON", "Automated Testing of Card Read")
-FACILITY_CODE = int(os.getenv("FACILITY_CODE", 111))  # Set your facility code here
+FACILITY_CODE = os.getenv("FACILITY_CODE", "111").zfill(8)  # '00000111'  # Set your facility code here
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
@@ -301,15 +301,21 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
 
     raise Exception(f"Badge Type '{badge_type_name}' not found after creation.")
 
-def generate_card_number():
+def generate_card_number(existing_card_numbers):
     """
-    Generates a random card number within the valid range.
-
+    Generates a unique 16-digit card number.
+    
+    Args:
+        existing_card_numbers (set): A set of existing card numbers to ensure uniqueness.
+    
     Returns:
-        int: A card number in the range of 1 to 65535.
+        str: A unique 16-digit card number as a string.
     """
-    card_number = random.randint(1, 65535)
-    return card_number
+    while True:
+        card_number = str(random.randint(0, 9999999999999999)).zfill(16)
+        if card_number not in existing_card_numbers:
+            return card_number
+
 
 def get_access_levels(base_address, access_token, instance_id):
     access_levels_endpoint = f"{base_address}/api/f/{instance_id}/accesslevels"
@@ -340,6 +346,32 @@ def get_access_levels(base_address, access_token, instance_id):
     except Exception as err:
         logger.error(f"Error retrieving access levels: {err}")
         raise
+def get_existing_card_numbers(base_address, access_token, instance_id):
+    """
+    Retrieves all existing card numbers to ensure uniqueness.
+    
+    Returns:
+        set: A set of existing card numbers as strings.
+    """
+    card_formats = get_card_formats(base_address, access_token, instance_id)
+    existing_card_numbers = set()
+    for cf in card_formats:
+        # Fetch all card assignments for each card format
+        card_assignments_endpoint = f"{base_address}/api/f/{instance_id}/cardformats/{cf.get('Key')}/cardassignments"
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        try:
+            response = SESSION.get(card_assignments_endpoint, headers=headers, timeout=10)
+            response.raise_for_status()
+            card_assignments = response.json()
+            for ca in card_assignments:
+                existing_card_numbers.add(str(ca.get('EncodedCardNumber', '0')).zfill(16))
+        except Exception as e:
+            logger.error(f"Error fetching card assignments for card format {cf.get('Key')}: {e}")
+            continue
+    return existing_card_numbers
 
 def get_card_formats(base_address, access_token, instance_id):
     """
@@ -454,20 +486,23 @@ def get_controllers(base_address, access_token, instance_id):
 def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours):
     """
     Creates a new user in the Keep by Feenics system with the 'Access' access level.
-
+    
     Returns:
         str: The unlock link generated for the user.
     """
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
-    card_number = generate_card_number()
-    facility_code = FACILITY_CODE  # Use the global facility code
+    # Fetch existing card numbers to ensure uniqueness
+    existing_card_numbers = get_existing_card_numbers(base_address, access_token, instance_id)
 
-    # Generate issue code (set to a fixed value or randomly)
-    #
-    issue_code = random.randint(1, 9999)  # Example: 4-digit issue code
+    # Generate unique 16-digit card number
+    card_number = generate_card_number(existing_card_numbers)
+    facility_code = FACILITY_CODE  # Already zero-padded to 8 digits
 
-    # Prepare the current and expiration times
+    # Set issue code to 0 as per the card format
+    issue_code = 0
+
+    # Prepare active and expiration times
     active_on = datetime.datetime.utcnow().isoformat() + "Z"
     expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat() + "Z"
 
@@ -537,10 +572,10 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         "CardAssignments": [
             {
                 "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
-                "EncodedCardNumber": int(card_number),
-                "DisplayCardNumber": str(card_number),
-                "FacilityCode": int(facility_code),
-                "IssueCode": int(issue_code),  # Use generated IssueCode
+                "EncodedCardNumber": int(card_number),  # Ensure card_number is all digits
+                "DisplayCardNumber": card_number,        # Already a 16-digit string
+                "FacilityCode": int(facility_code),       # Convert back to int
+                "IssueCode": issue_code,                 # 0 as per format
                 "CardFormatKey": selected_card_format.get("Key"),
                 "ActiveOn": active_on,
                 "ExpiresOn": expires_on,
@@ -554,8 +589,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "$type": "Feenics.Keep.WebApi.Model.MetadataItem, Feenics.Keep.WebApi.Model",
                 "Application": "CustomApp",
                 "Values": json.dumps({
-                    "CardNumber": str(card_number),
-                    "FacilityCode": str(facility_code),
+                    "CardNumber": card_number,
+                    "FacilityCode": facility_code,
                     "IssueCode": str(issue_code)
                 }),
                 "ShouldPublishUpdateEvents": False
@@ -572,7 +607,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         # Log the user data payload for debugging
         logger.debug(f"User Data Payload: {json.dumps(user_data, indent=2)}")
 
-        response = SESSION.post(create_person_endpoint, headers=headers, json=user_data)
+        response = SESSION.post(create_person_endpoint, headers=headers, json=user_data, timeout=10)
         response.raise_for_status()
 
         response_data = response.json()
@@ -593,8 +628,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             last_name=last_name,
             email=email,
             phone_number=phone_number,
-            card_number=card_number,
-            facility_code=facility_code,
+            card_number=int(card_number),  # Store as integer if required
+            facility_code=int(facility_code),
             issue_code=issue_code,
             membership_start=membership_start,
             membership_end=membership_end
@@ -883,6 +918,7 @@ def reset_database():
         return jsonify({'error': 'Failed to reset database'}), 500
 
 @app.route('/webhook', methods=['POST'])
+@app.route('/webhook', methods=['POST'])
 def handle_webhook():
     data = request.json
     logger.info(f"Received webhook data: {data}")
@@ -906,6 +942,8 @@ def handle_webhook():
 
     return jsonify({'status': 'User creation in progress'}), 200
 
+
+@app.route('/unlock', methods=['GET'])
 @app.route('/unlock', methods=['GET'])
 def handle_unlock():
     token = request.args.get('token')
@@ -936,6 +974,7 @@ def handle_unlock():
     threading.Thread(target=simulate_unlock, args=(card_number, facility_code, issue_code)).start()
 
     return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
+
 
 def simulate_unlock(card_number, facility_code, issue_code):
     """
@@ -985,6 +1024,9 @@ def simulate_unlock(card_number, facility_code, issue_code):
                 logger.error("Specified Controller not found.")
                 return
 
+            # Format card_number with leading zeros if necessary
+            card_number_str = str(card_number).zfill(16)
+
             # Simulate Card Read
             success = simulate_card_read(
                 base_address=BASE_ADDRESS,
@@ -995,7 +1037,7 @@ def simulate_unlock(card_number, facility_code, issue_code):
                 controller=controller,
                 reason=SIMULATION_REASON,
                 facility_code=facility_code,
-                card_number=card_number,
+                card_number=card_number_str,
                 issue_code=issue_code
             )
 
@@ -1006,6 +1048,7 @@ def simulate_unlock(card_number, facility_code, issue_code):
 
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
+
 
 
 # ----------------------------
