@@ -649,8 +649,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         "CardAssignments": [
             {
                 "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
-                "EncodedCardNumber": int(card_number),  # Now card_number is an integer
-                "DisplayCardNumber": str(card_number).zfill(16),  # Ensure it's a 16-digit string
+                "EncodedCardNumber": card_number,  # Now card_number is an integer within 5 digits
+                "DisplayCardNumber": str(card_number).zfill(5),  # Ensure it's a 5-digit string
                 "FacilityCode": int(facility_code),       # Convert back to int
                 "IssueCode": issue_code,                 # 0 as per format
                 "CardFormatKey": selected_card_format.get("Key"),
@@ -666,7 +666,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "$type": "Feenics.Keep.WebApi.Model.MetadataItem, Feenics.Keep.WebApi.Model",
                 "Application": "CustomApp",
                 "Values": json.dumps({
-                    "CardNumber": card_number,
+                    "CardNumber": str(card_number).zfill(5),  # Updated to 5 digits
                     "FacilityCode": facility_code,
                     "IssueCode": str(issue_code)
                 }),
@@ -705,7 +705,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             last_name=last_name,
             email=email,
             phone_number=phone_number,
-            card_number=int(card_number),  # Store as integer if required
+            card_number=card_number,  # Store as integer
             facility_code=int(facility_code),
             issue_code=issue_code,
             membership_start=membership_start,
@@ -736,6 +736,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
         raise
+
 
 
 def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number, issue_code):
