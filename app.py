@@ -549,12 +549,24 @@ def get_card_formats(base_address, access_token, instance_id):
         response = SESSION.get(card_formats_endpoint, headers=headers)
         response.raise_for_status()
         card_formats_data = response.json()
-        card_formats = card_formats_data.get('value', card_formats_data)
+
+        # Handle both dict and list responses
+        if isinstance(card_formats_data, dict):
+            card_formats = card_formats_data.get('value', [])
+            if not card_formats:
+                logger.warning("No card formats found under 'value' key.")
+        elif isinstance(card_formats_data, list):
+            card_formats = card_formats_data
+        else:
+            logger.error("Unexpected data format for card formats.")
+            card_formats = []
+
         logger.info(f"Retrieved {len(card_formats)} card formats.")
         return card_formats
     except Exception as err:
         logger.error(f"Error retrieving card formats: {err}")
         raise
+
 
 def get_controllers(base_address, access_token, instance_id):
     """
