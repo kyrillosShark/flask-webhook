@@ -535,7 +535,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             phone_number=phone_number,
             card_number=card_number,
             facility_code=facility_code,
-            issue_code=issue_code if issue_code else 0,
+            #issue_code=issue_code if issue_code else 0,
             membership_start=membership_start,
             membership_end=membership_end
         )
