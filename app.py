@@ -343,10 +343,10 @@ def get_access_levels(base_address, access_token, instance_id):
 
 def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours, issue_code_size):
     """
-    Creates a new user in the Keep by Feenics system with access to all access levels.
+    Creates a new user in the Keep by Feenics system.
 
     Returns:
-        User: The created User object.
+        tuple: (User object, user_id)
     """
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
@@ -362,25 +362,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         issue_code = None  # IssueCode not required
 
     # Prepare the current and expiration times
-    active_on = datetime.datetime.utcnow().isoformat() + "Z"
-    expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).isoformat() + "Z"
-
-    # Retrieve all access levels
-    access_levels = get_access_levels(base_address, access_token, instance_id)
-    if not access_levels:
-        logger.error("No access levels found.")
-        raise Exception("No access levels available to assign to the user.")
-
-    # Prepare Access Level Assignments
-    access_level_assignments = []
-    for al in access_levels:
-        assignment = {
-            "$type": "Feenics.Keep.WebApi.Model.AccessLevelAssignmentInfo, Feenics.Keep.WebApi.Model",
-            "AccessLevelKey": al.get("Key"),
-            "ActiveOn": active_on,
-            "ExpiresOn": expires_on
-        }
-        access_level_assignments.append(assignment)
+    active_on = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).replace(microsecond=0).isoformat() + "Z"
 
     # Retrieve card formats
     card_formats = get_card_formats(base_address, access_token, instance_id)
@@ -445,7 +428,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             }
         ],
         "CardAssignments": [card_assignment],
-        "AccessLevelAssignments": access_level_assignments,
+        # Remove AccessLevelAssignments from here
+        # "AccessLevelAssignments": access_level_assignments,  # Remove this line
         "Metadata": [
             {
                 "$type": "Feenics.Keep.WebApi.Model.MetadataItem, Feenics.Keep.WebApi.Model",
@@ -476,7 +460,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             raise Exception("User ID not found in the response.")
 
         logger.info(f"User '{first_name} {last_name}' created successfully with ID: {user_id}")
-        logger.info(f"Assigned Card Number: {card_number}, Facility Code: {facility_code}, Issue Code: {issue_code}")
+        logger.info(f"Assigned Card Number: {card_number}, Facility Code: {facility_code}, IssueCode: {issue_code}")
 
         # Create User in local database
         membership_start = datetime.datetime.utcnow()
@@ -497,13 +481,46 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         db.session.add(user)
         db.session.commit()
 
-        return user
+        return user, user_id  # Return both user and user_id
     except requests.exceptions.HTTPError as http_err:
         logger.error(f"HTTP error during user creation: {http_err}")
         logger.error(f"Response Content: {response.text}")
         raise
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
+        raise
+def assign_access_levels_to_user_with_dates(base_address, access_token, instance_id, person_key, access_levels, active_on, expires_on):
+    """
+    Assigns access levels to a person with active and expiration dates.
+    """
+    assign_endpoint = f"{base_address}/api/f/{instance_id}/people/{person_key}/accesslevelassignments"
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    
+    # Prepare the list of access level assignments
+    access_level_assignments = []
+    for al in access_levels:
+        assignment = {
+            "$type": "Feenics.Keep.WebApi.Model.AccessLevelAssignmentInfo, Feenics.Keep.WebApi.Model",
+            "AccessLevelKey": al.get("Key"),
+            "ActiveOn": active_on,
+            "ExpiresOn": expires_on
+        }
+        access_level_assignments.append(assignment)
+
+    try:
+        response = SESSION.post(assign_endpoint, headers=headers, json=access_level_assignments)
+        response.raise_for_status()
+        logger.info(f"Access levels assigned to user {person_key} successfully with dates.")
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error during access level assignment: {http_err}")
+        logger.error(f"Response Content: {response.text}")
+        raise
+    except Exception as err:
+        logger.error(f"Error assigning access levels to user {person_key}: {err}")
         raise
 
 def get_readers(base_address, access_token, instance_id):
@@ -708,8 +725,18 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 logger.info(f"User with email {email} already exists in the local database.")
                 return
 
-            # Create the user via CRM API and store in local database
-            user = create_user(
+            # Step 5: Retrieve all access levels
+            access_levels = get_access_levels(BASE_ADDRESS, access_token, instance_id)
+            if not access_levels:
+                logger.error("No access levels found.")
+                raise Exception("No access levels available to assign to the user.")
+
+            # Prepare active_on and expires_on
+            active_on = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+            expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).replace(microsecond=0).isoformat() + "Z"
+
+            # Step 6: Create the user via CRM API and store in local database
+            user, user_id = create_user(
                 base_address=BASE_ADDRESS,
                 access_token=access_token,
                 instance_id=instance_id,
@@ -722,15 +749,30 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 issue_code_size=issue_code_size
             )
 
-            # Step 5: Generate Unlock Token and Link
+            # Step 7: Assign Access Levels to the User
+            assign_access_levels_to_user_with_dates(
+                base_address=BASE_ADDRESS,
+                access_token=access_token,
+                instance_id=instance_id,
+                person_key=user_id,
+                access_levels=access_levels,
+                active_on=active_on,
+                expires_on=expires_on
+            )
+
+            # Optional: Wait for access levels to be processed
+            time.sleep(2)
+
+            # Step 8: Generate Unlock Token and Link
             unlock_token_str = generate_unlock_token(user.id)
             unlock_link = create_unlock_link(unlock_token_str)
 
-            # Step 6: Send SMS with Unlock Link
+            # Step 9: Send SMS with Unlock Link
             send_sms(phone_number, unlock_link)
 
     except Exception as e:
         logger.exception(f"Error in processing user creation: {e}")
+
 
 # ----------------------------
 # Unlock Token Management
