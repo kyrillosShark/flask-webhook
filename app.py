@@ -869,7 +869,7 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     # Construct the payload
     payload = {
         "$type": "Feenics.Keep.WebApi.Model.EventMessagePosting, Feenics.Keep.WebApi.Model",
-        "OccurredOn": datetime.datetime.now(timezone.utc).isoformat() + "Z",
+        "OccurredOn": datetime.datetime.utcnow().replace(microsecond=0).isoformat() + 'Z',
         "AppKey": "MercuryCommands",
         "EventTypeMoniker": {
             "$type": "Feenics.Keep.WebApi.Model.MonikerItem, Feenics.Keep.WebApi.Model",
