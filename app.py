@@ -677,7 +677,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "Application": "CustomApp",
                 "Values": json.dumps({
                     "CardNumber": str(card_number).zfill(5),        # 5-digit string
-                    "FacilityCode": str(facility_code)             # **Removed zfill(8) to display as "128"**
+                    "FacilityCode": str(facility_code)             # **No zfill to display as "128"**
                 }),
                 "ShouldPublishUpdateEvents": False
             }
@@ -769,7 +769,7 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     # Construct EventData
     event_data = {
         "Reason": reason,
-        "FacilityCode": facility_code_int,
+        "FacilityCode": facility_code_int,  # Integer 128
         "EncodedCardNumber": card_number_int,
     }
 
@@ -883,12 +883,14 @@ def send_sms(phone_number, unlock_link):
             to=phone_number
         )
         logger.info(f"SMS sent to {phone_number}. SID: {message.sid}, Status: {message.status}")
+        return True  # Indicate success
     except Exception as e:
         logger.error(f"Failed to send SMS to {phone_number}: {e}")
         if hasattr(e, 'code'):
             logger.error(f"Twilio Error Code: {e.code}")
         if hasattr(e, 'msg'):
             logger.error(f"Twilio Error Message: {e.msg}")
+        return False  # Indicate failure
 
 # ----------------------------
 # User Creation and Messaging Workflow
