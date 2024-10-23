@@ -1005,6 +1005,7 @@ def reset_database():
         logger.exception(f"Error resetting database: {e}")
         return jsonify({'error': 'Failed to reset database'}), 500
 
+
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
     data = request.json
@@ -1023,11 +1024,29 @@ def handle_webhook():
 
     logger.info(f"Processing user: {first_name} {last_name}, Email: {email}, Phone: {phone_number}")
 
-    # Process user creation in a separate thread to avoid blocking
-    threading.Thread(target=process_user_creation, args=(
-        first_name, last_name, email, phone_number)).start()
+    # Determine if the request should be synchronous based on a query parameter
+    sync = request.args.get('sync', 'false').lower() == 'true'
 
-    return jsonify({'status': 'User creation in progress'}), 200
+    if sync:
+        # Process synchronously and return the unlock link
+        unlock_link = process_user_creation(
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            phone_number=phone_number
+        )
+        if unlock_link:
+            return jsonify({
+                'status': 'User created successfully',
+                'unlock_link': unlock_link
+            }), 200
+        else:
+            return jsonify({'error': 'User creation failed'}), 500
+    else:
+        # Process asynchronously
+        threading.Thread(target=process_user_creation, args=(
+            first_name, last_name, email, phone_number)).start()
+        return jsonify({'status': 'User creation in progress'}), 200
 
 @app.route('/unlock', methods=['GET'])
 def handle_unlock():
