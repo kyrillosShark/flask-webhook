@@ -347,12 +347,43 @@ def get_access_levels(base_address, access_token, instance_id):
 def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours, issue_code_size):
     """
     Creates a new user in the Keep by Feenics system with access to all access levels.
+    If the user already exists, it retrieves the existing user.
 
     Returns:
-        User: The created User object.
+        User: The created or existing User object.
     """
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
+    # Step 1: Check if the user already exists
+    existing_user_external = find_user_by_email(base_address, access_token, instance_id, email)
+    if existing_user_external:
+        # User exists externally, now check local DB
+        user = User.query.filter_by(email=email).first()
+        if user:
+            logger.info(f"User '{email}' already exists in the local database.")
+            return user
+        else:
+            # Synchronize with local DB
+            membership_start = datetime.datetime.utcnow()
+            membership_end = membership_start + timedelta(hours=membership_duration_hours)
+
+            user = User(
+                first_name=existing_user_external.get('GivenName', first_name),
+                last_name=existing_user_external.get('Surname', last_name),
+                email=email,
+                phone_number=phone_number,
+                card_number=existing_user_external.get('CardNumber', generate_card_number()),
+                facility_code=FACILITY_CODE,
+                issue_code=existing_user_external.get('IssueCode', 0),
+                membership_start=membership_start,
+                membership_end=membership_end
+            )
+            db.session.add(user)
+            db.session.commit()
+            logger.info(f"Existing user '{email}' synchronized to the local database.")
+            return user
+
+    # Step 2: User does not exist, proceed to create
     card_number = generate_card_number()
     facility_code = FACILITY_CODE
 
@@ -390,9 +421,10 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         logger.error("No card formats found.")
         raise Exception("No card formats available to assign to the card.")
 
-    # Find the HID 26-bit card format
+    # Use the first available card format
     selected_card_format = card_formats[0]
     logger.info(f"Using card format: {selected_card_format.get('CommonName')}")
+
     # Prepare Card Assignment
     card_assignment = {
         "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
@@ -499,9 +531,41 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         db.session.commit()
 
         return user
+    except requests.exceptions.HTTPError as http_err:
+        if response.status_code == 409:
+            logger.error(f"Conflict Error: User with email {email} already exists.")
+            # Handle conflict, possibly by retrieving the existing user
+            existing_user_external = find_user_by_email(base_address, access_token, instance_id, email)
+            if existing_user_external:
+                # Proceed to synchronize or update if necessary
+                user = User.query.filter_by(email=email).first()
+                if not user:
+                    # Add to local DB
+                    membership_start = datetime.datetime.utcnow()
+                    membership_end = membership_start + timedelta(hours=membership_duration_hours)
+
+                    user = User(
+                        first_name=existing_user_external.get('GivenName', first_name),
+                        last_name=existing_user_external.get('Surname', last_name),
+                        email=email,
+                        phone_number=phone_number,
+                        card_number=existing_user_external.get('CardNumber', generate_card_number()),
+                        facility_code=FACILITY_CODE,
+                        issue_code=existing_user_external.get('IssueCode', 0),
+                        membership_start=membership_start,
+                        membership_end=membership_end
+                    )
+                    db.session.add(user)
+                    db.session.commit()
+                    logger.info(f"Existing user '{email}' added to the local database.")
+                return user
+        logger.error(f"HTTP error during user creation: {http_err}")
+        logger.error(f"Response Content: {response.text}")
+        raise
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
         raise
+
 
 def get_readers(base_address, access_token, instance_id):
     """
