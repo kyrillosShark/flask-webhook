@@ -391,11 +391,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         raise Exception("No card formats available to assign to the card.")
 
     # Find the HID 26-bit card format
-    hid_card_format = next((cf for cf in card_formats if cf.get("CommonName") == "HID 26-bit"), None)
-    if not hid_card_format:
-        logger.error("HID 26-bit card format not found.")
-        raise Exception("HID 26-bit card format is required for card assignment.")
-
+    selected_card_format = card_formats[0]
+    logger.info(f"Using card format: {selected_card_format.get('CommonName')}")
     # Prepare Card Assignment
     card_assignment = {
         "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
