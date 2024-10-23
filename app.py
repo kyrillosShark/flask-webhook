@@ -494,7 +494,7 @@ def assign_access_levels_to_user_with_dates(base_address, access_token, instance
     """
     Assigns access levels to a person with active and expiration dates.
     """
-    assign_endpoint = f"{base_address}/api/f/{instance_id}/accesslevelassignments"
+    assign_endpoint = f"{base_address}/api/f/{instance_id}/people/{person_key}/accesslevelassignments"
 
     headers = {
         "Authorization": f"Bearer {access_token}",
