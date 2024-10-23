@@ -1004,6 +1004,53 @@ def reset_database():
     except Exception as e:
         logger.exception(f"Error resetting database: {e}")
         return jsonify({'error': 'Failed to reset database'}), 500
+# ----------------------------
+# New Flask Route for Testing
+# ----------------------------
+
+@app.route('/create_user', methods=['POST'])
+def create_user_endpoint():
+    data = request.json
+    logger.info(f"Received create_user request: {data}")
+
+    # Extract fields from the data
+    first_name = data.get('first_name')
+    last_name = data.get('last_name')
+    email = data.get('email')
+    phone_number = data.get('phone')
+
+    # Check for required fields
+    if not all([first_name, last_name, email, phone_number]):
+        logger.warning("Missing required fields.")
+        return jsonify({'error': 'Missing required fields.'}), 400
+
+    logger.info(f"Processing user: {first_name} {last_name}, Email: {email}, Phone: {phone_number}")
+
+    # Validate phone number format
+    if not phone_number.startswith('+') or not phone_number[1:].isdigit():
+        logger.warning(f"Invalid phone number format: {phone_number}")
+        return jsonify({'error': 'Invalid phone number format. Use E.164 format.'}), 400
+
+    # Optionally, validate phone number using Twilio Lookup API
+    if not validate_phone_number(client, phone_number):
+        return jsonify({'error': 'Invalid or non-mobile phone number.'}), 400
+
+    # Process user creation synchronously
+    unlock_link = process_user_creation(
+        first_name=first_name,
+        last_name=last_name,
+        email=email,
+        phone_number=phone_number,
+        membership_duration_hours=24  # You can make this configurable
+    )
+
+    if unlock_link:
+        return jsonify({
+            'status': 'User created successfully',
+            'unlock_link': unlock_link
+        }), 200
+    else:
+        return jsonify({'error': 'User creation failed'}), 500
 
 
 @app.route('/webhook', methods=['POST'])
