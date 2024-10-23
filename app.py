@@ -702,7 +702,8 @@ def send_sms(phone_number, unlock_link):
 
 def process_user_creation(first_name, last_name, email, phone_number, membership_duration_hours=24):
     """
-    Complete workflow to create a user in CRM, store membership info, generate unlock link, and send an SMS.
+    Complete workflow to create a user in CRM, store membership info, assign access levels,
+    generate unlock link, and send an SMS.
     """
     try:
         with app.app_context():
@@ -743,10 +744,6 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 logger.error("No access levels found.")
                 raise Exception("No access levels available to assign to the user.")
 
-            # Prepare active_on and expires_on
-            active_on = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-            expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).replace(microsecond=0).isoformat() + "Z"
-
             # Step 6: Create the user via CRM API and store in local database
             user, user_id = create_user(
                 base_address=BASE_ADDRESS,
@@ -762,14 +759,12 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
             )
 
             # Step 7: Assign Access Levels to the User
-            assign_access_levels_to_user_with_dates(
+            assign_access_levels_to_user(
                 base_address=BASE_ADDRESS,
                 access_token=access_token,
                 instance_id=instance_id,
                 person_key=user_id,
-                access_levels=access_levels,
-                active_on=active_on,
-                expires_on=expires_on
+                access_levels=access_levels
             )
 
             # Optional: Wait for access levels to be processed
