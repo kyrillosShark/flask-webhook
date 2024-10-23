@@ -1026,6 +1026,44 @@ def simulate_unlock(card_number, facility_code, issue_code):
 
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
+def find_user_by_email(base_address, access_token, instance_id, email):
+    """
+    Searches for a user by email in the Keep by Feenics system.
+
+    Returns:
+        dict or None: User data if found, else None.
+    """
+    search_endpoint = f"{base_address}/api/f/{instance_id}/people"
+    params = {
+        '$filter': f"Addresses/any(a: a/MailTo eq '{email}')"
+    }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = SESSION.get(search_endpoint, headers=headers, params=params)
+        response.raise_for_status()
+        search_results = response.json()
+
+        # The response contains a 'value' key with a list of users
+        users = search_results.get('value', [])
+
+        if users:
+            logger.info(f"User with email {email} already exists in the external system.")
+            return users[0]  # Return the first matching user
+        else:
+            logger.info(f"No existing user found with email {email}.")
+            return None
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error during user search: {http_err}")
+        logger.error(f"Response Content: {response.text}")
+        raise
+    except Exception as err:
+        logger.error(f"Error during user search: {err}")
+        raise
 
 # ----------------------------
 # Main Execution
