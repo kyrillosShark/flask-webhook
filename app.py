@@ -346,13 +346,13 @@ def format_hid_26bit_h10301(facility_code, card_number):
 def generate_card_number():
     """
     Generates a random card number within the valid HID 26-bit format range.
-    
+
     Returns:
-        tuple: (facility_code, card_number)
+        int: card_number
     """
-    facility_code = random.randint(0, 255)  # 8 bits
     card_number = random.randint(0, 65535)  # 16 bits
-    return facility_code, card_number
+    return card_number
+
 
 def get_access_levels(base_address, access_token, instance_id):
     access_levels_endpoint = f"{base_address}/api/f/{instance_id}/accesslevels"
