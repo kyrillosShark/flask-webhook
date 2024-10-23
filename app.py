@@ -114,7 +114,7 @@ class User(db.Model):
     phone_number = db.Column(db.String(20), unique=False, nullable=False)
     card_number = db.Column(db.Integer, unique=False, nullable=False)
     facility_code = db.Column(db.Integer, unique=False, nullable=False)
-    issue_code = db.Column(db.Integer, unique=False, nullable=True)
+    #issue_code = db.Column(db.Integer, unique=False, nullable=True)
     membership_start = db.Column(db.DateTime, nullable=False)
     membership_end = db.Column(db.DateTime, nullable=False)
 
@@ -401,6 +401,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     # Proceed to create user
     card_number = generate_card_number()
     facility_code = FACILITY_CODE
+    card_number = format_hid_26bit_h10301(card_number, facility_code)
 
     # Generate IssueCode if required
     if issue_code_size > 0:
