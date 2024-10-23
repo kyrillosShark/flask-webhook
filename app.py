@@ -705,7 +705,6 @@ def send_sms(phone_number, unlock_link):
 # ----------------------------
 # User Creation and Messaging Workflow
 # ----------------------------
-
 def process_user_creation(first_name, last_name, email, phone_number, membership_duration_hours=24):
     """
     Complete workflow to create a user in CRM, store membership info, assign access levels,
