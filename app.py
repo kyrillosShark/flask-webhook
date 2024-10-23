@@ -494,7 +494,8 @@ def assign_access_levels_to_user_with_dates(base_address, access_token, instance
     """
     Assigns access levels to a person with active and expiration dates.
     """
-    assign_endpoint = f"{base_address}/api/f/{instance_id}/people/{person_key}/accesslevelassignments"
+    # Corrected endpoint
+    assign_endpoint = f"{base_address}/api/f/{instance_id}/accesslevelassignments"
 
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -506,12 +507,16 @@ def assign_access_levels_to_user_with_dates(base_address, access_token, instance
     for al in access_levels:
         assignment = {
             "$type": "Feenics.Keep.WebApi.Model.AccessLevelAssignmentInfo, Feenics.Keep.WebApi.Model",
-            "PersonKey": person_key,
+            "PersonKey": person_key,  # Include PersonKey in the payload
             "AccessLevelKey": al.get("Key"),
             "ActiveOn": active_on,
             "ExpiresOn": expires_on
         }
         access_level_assignments.append(assignment)
+
+    # Add logging to verify the endpoint and payload
+    logger.debug(f"Assign Endpoint: {assign_endpoint}")
+    logger.debug(f"Access Level Assignments Payload: {json.dumps(access_level_assignments, indent=2)}")
 
     try:
         response = SESSION.post(assign_endpoint, headers=headers, json=access_level_assignments)
