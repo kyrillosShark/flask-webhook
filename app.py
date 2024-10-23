@@ -124,6 +124,7 @@ class User(db.Model):
 
 
 
+
 class UnlockToken(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     token = db.Column(db.String(36), unique=False, nullable=False)
@@ -553,6 +554,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
         raise
+
 
 def assign_access_levels_to_user(base_address, access_token, instance_id, person_key, access_levels):
     """
