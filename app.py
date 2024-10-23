@@ -534,7 +534,6 @@ def assign_access_levels_to_user(base_address, access_token, instance_id, person
         logger.error(f"Error assigning access levels to user {person_key}: {err}")
         raise
 
-
 def get_readers(base_address, access_token, instance_id):
     """
     Retrieves a list of available Readers.
