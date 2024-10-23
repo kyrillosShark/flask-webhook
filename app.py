@@ -384,44 +384,59 @@ def get_access_levels(base_address, access_token, instance_id):
 
 def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours):
     """
-    Creates a new user in the Keep by Feenics system using only the 16-bit card_number.
+    Creates a new user in the Keep by Feenics system.
+
+    Returns:
+        tuple: (User object, user_id)
     """
+    create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
+
     # ----------------------------
-    # Step 1: Generate Card Number
+    # Step 1: Generate and Format Card Number
     # ----------------------------
-    
+
+    # Generate raw 16-bit card number
     card_number = generate_card_number()  # Returns int within 0-65535
     facility_code = FACILITY_CODE  # From environment variable
     logger.debug(f"Generated Card Number: {card_number}, Facility Code: {facility_code}")
-    
+
+    # Format the card number into a 26-bit number
+    formatted_card_number, error_message = format_hid_26bit_h10301(facility_code, card_number)
+
+    if formatted_card_number is None:
+        logger.error(f"Error formatting card number: {error_message}")
+        raise ValueError(error_message)
+
+    logger.debug(f"Formatted Card Number (26-bit): {formatted_card_number}")
+
     # ----------------------------
     # Step 2: Prepare Active and Expiration Times
     # ----------------------------
-    
+
     active_on = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
     expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).replace(microsecond=0).isoformat() + "Z"
-    
+
     # ----------------------------
     # Step 3: Retrieve Card Formats
     # ----------------------------
-    
+
     card_formats = get_card_formats(base_address, access_token, instance_id)
     if not card_formats:
         logger.error("No card formats found.")
         raise Exception("No card formats available to assign to the card.")
-    
+
     # Use the first available card format
     selected_card_format = card_formats[0]
     logger.info(f"Using card format: {selected_card_format.get('CommonName')}")
-    
+
     # ----------------------------
     # Step 4: Prepare Card Assignment Data
     # ----------------------------
-    
+
     card_assignment = {
         "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
-        "EncodedCardNumber": int(card_number),  # Use raw 16-bit Card Number
-        "DisplayCardNumber": str(card_number),  # Use raw 16-bit Card Number
+        "EncodedCardNumber": int(card_number),
+        "DisplayCardNumber": str(card_number),
         "FacilityCode": int(facility_code),
         "ActiveOn": active_on,
         "ExpiresOn": expires_on,
@@ -437,11 +452,11 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         "OriginalUseCount": None,
         "CurrentUseCount": 0,
     }
-    
+
     # ----------------------------
     # Step 5: Prepare User Data for CRM API
     # ----------------------------
-    
+
     user_data = {
         "$type": "Feenics.Keep.WebApi.Model.PersonInfo, Feenics.Keep.WebApi.Model",
         "CommonName": f"{first_name} {last_name}",
@@ -482,56 +497,57 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             }
         ]
     }
-    
+
     # ----------------------------
     # Step 6: Define Headers for CRM API Request
     # ----------------------------
-    
+
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
-    
+
     # ----------------------------
     # Step 7: Make CRM API Request to Create User
     # ----------------------------
-    
+
     try:
         response = SESSION.post(create_person_endpoint, headers=headers, json=user_data)
         response.raise_for_status()
-    
+
         response_data = response.json()
         user_id = response_data.get("Key")
-    
+
         if not user_id:
             raise Exception("User ID not found in the response.")
-    
+
         logger.info(f"User '{first_name} {last_name}' created successfully with ID: {user_id}")
         logger.info(f"Assigned Card Number: {card_number}, Facility Code: {facility_code}")
-    
+
         # ----------------------------
         # Step 8: Create User in Local Database
         # ----------------------------
-    
+
         membership_start = datetime.datetime.utcnow()
         membership_end = membership_start + timedelta(hours=membership_duration_hours)
-    
+
         user = User(
             first_name=first_name,
             last_name=last_name,
             email=email,
             phone_number=phone_number,
             card_number=card_number,                      # Raw 16-bit Card Number
+            formatted_card_number=formatted_card_number,  # 26-bit Formatted Card Number
             facility_code=facility_code,
             membership_start=membership_start,
             membership_end=membership_end
         )
-    
+
         db.session.add(user)
         db.session.commit()
-    
+
         return user, user_id  # Return both user and user_id
-    
+
     except requests.exceptions.HTTPError as http_err:
         logger.error(f"HTTP error during user creation: {http_err}")
         logger.error(f"Response Content: {response.text}")
@@ -751,7 +767,7 @@ def send_sms(phone_number, unlock_link):
 def process_user_creation(first_name, last_name, email, phone_number, membership_duration_hours=24):
     """
     Complete workflow to create a user in CRM, store membership info, assign access levels,
-    generate unlock link, and send an SMS using only the 16-bit card_number.
+    generate unlock link, and send an SMS.
     """
     try:
         with app.app_context():
@@ -762,11 +778,11 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 username=KEEP_USERNAME,
                 password=KEEP_PASSWORD
             )
-    
+
             # Step 2: Get or Create Badge Type
             badge_types = get_badge_types(BASE_ADDRESS, access_token, instance_id)
             badge_type_info = next((bt for bt in badge_types if bt.get("CommonName") == BADGE_TYPE_NAME), None)
-    
+
             if not badge_type_info:
                 logger.info(f"Badge Type '{BADGE_TYPE_NAME}' does not exist. Creating it now.")
                 badge_type_response = create_badge_type(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
@@ -775,19 +791,19 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 else:
                     # If Badge Type already exists (status code 409), retrieve its details
                     badge_type_info = get_badge_type_details(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
-    
+
             # Step 3: Check if user exists in the local database
             existing_user = User.query.filter_by(email=email).first()
             if existing_user:
                 logger.info(f"User with email {email} already exists in the local database.")
                 return
-    
+
             # Step 4: Retrieve all access levels
             access_levels = get_access_levels(BASE_ADDRESS, access_token, instance_id)
             if not access_levels:
                 logger.error("No access levels found.")
                 raise Exception("No access levels available to assign to the user.")
-    
+
             # Step 5: Create the user via CRM API and store in local database
             user, user_id = create_user(
                 base_address=BASE_ADDRESS,
@@ -800,7 +816,7 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 badge_type_info=badge_type_info,
                 membership_duration_hours=membership_duration_hours
             )
-    
+
             # Step 6: Assign Access Levels to the User
             assign_access_levels_to_user(
                 base_address=BASE_ADDRESS,
@@ -809,20 +825,23 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 person_key=user_id,
                 access_levels=access_levels
             )
-    
+
             # Optional: Wait for access levels to be processed
             time.sleep(2)
-    
+
             # Step 7: Generate Unlock Token and Link
             unlock_token_str = generate_unlock_token(user.id)
             unlock_link = create_unlock_link(unlock_token_str)
-    
+
             # Step 8: Send SMS with Unlock Link
             send_sms(phone_number, unlock_link)
-    
+
     except Exception as e:
         logger.exception(f"Error in processing user creation: {e}")
 
+# ----------------------------
+# Unlock Token Management
+# ----------------------------
 
 def validate_unlock_token(token):
     """
@@ -887,6 +906,7 @@ def handle_webhook():
     return jsonify({'status': 'User creation in progress'}), 200
 
 
+@app.route('/unlock', methods=['GET'])
 
 @app.route('/unlock', methods=['GET'])
 def handle_unlock():
@@ -908,21 +928,21 @@ def handle_unlock():
         unlock_token.used = True
         db.session.commit()
 
-    # Retrieve only the raw 16-bit card number and facility code
+    # Retrieve both raw and formatted card numbers
     card_number = unlock_token.user.card_number
     facility_code = unlock_token.user.facility_code
+    formatted_card_number = unlock_token.user.formatted_card_number  # Retrieve the formatted card number
 
-    logger.info(f"Simulating unlock for card number: {card_number}, facility code: {facility_code}")
+    logger.info(f"Simulating unlock for card number: {formatted_card_number}, facility code: {facility_code}")
 
     # Simulate the card read in a separate thread to avoid blocking
-    threading.Thread(target=simulate_unlock, args=(card_number, facility_code)).start()
+    threading.Thread(target=simulate_unlock, args=(formatted_card_number, facility_code)).start()
 
     return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
 
-
-def simulate_unlock(card_number, facility_code):
+def simulate_unlock(formatted_card_number, facility_code):
     """
-    Simulates the card read to unlock the door using the 16-bit card_number.
+    Simulates the card read to unlock the door using the formatted_card_number.
     """
     try:
         with app.app_context():
@@ -990,7 +1010,7 @@ def simulate_unlock(card_number, facility_code):
                 controller=controller,
                 reason=SIMULATION_REASON,
                 facility_code=facility_code,
-                card_number=card_number  # Use 16-bit card_number
+                formatted_card_number=card_number  # Correct argument
             )
 
             if success:
@@ -1004,21 +1024,21 @@ def simulate_unlock(card_number, facility_code):
 
 
 
-def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number):
+def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, formatted_card_number):
     """
-    Simulates a card read by publishing a simulateCardRead event using the 16-bit card_number.
-    
+    Simulates a card read by publishing a simulateCardRead event using the formatted_card_number.
+
     Returns:
         bool: True if successful, False otherwise.
     """
     event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
 
-    # Ensure card_number and facility_code are integers
+    # Ensure formatted_card_number and facility_code are integers
     try:
-        card_number_int = int(card_number)
+        card_number_int = int(formatted_card_number)
         facility_code_int = int(facility_code)
     except ValueError as e:
-        logger.error(f"Invalid card number or facility code: {e}")
+        logger.error(f"Invalid formatted card number or facility code: {e}")
         return False
 
     # Construct EventData
@@ -1095,7 +1115,95 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         return False
 
 
+def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, formatted_card_number):
+    """
+    Simulates a card read by publishing a simulateCardRead event using the formatted_card_number.
 
+    Returns:
+        bool: True if successful, False otherwise.
+    """
+    event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
+
+    # Ensure formatted_card_number and facility_code are integers
+    try:
+        card_number_int = int(formatted_card_number)
+        facility_code_int = int(facility_code)
+    except ValueError as e:
+        logger.error(f"Invalid formatted card number or facility code: {e}")
+        return False
+
+    # Construct EventData
+    event_data = {
+        "Reason": reason,
+        "FacilityCode": facility_code_int,
+        "EncodedCardNumber": card_number_int,
+    }
+
+    logger.info(f"Event Data before encoding: {event_data}")
+
+    # Convert EventData to BSON and then to Base64
+    event_data_bson = BSON.encode(event_data)
+    event_data_base64 = base64.b64encode(event_data_bson).decode('utf-8')
+
+    logger.info(f"EventDataBsonBase64: {event_data_base64}")
+
+    # Construct the payload
+    payload = {
+        "$type": "Feenics.Keep.WebApi.Model.EventMessagePosting, Feenics.Keep.WebApi.Model",
+        "OccurredOn": datetime.datetime.utcnow().replace(microsecond=0).isoformat() + 'Z',
+        "AppKey": "MercuryCommands",
+        "EventTypeMoniker": {
+            "$type": "Feenics.Keep.WebApi.Model.MonikerItem, Feenics.Keep.WebApi.Model",
+            "Namespace": "MercuryServiceCommands",
+            "Nickname": "mercury:command-simulateCardRead"
+        },
+        "RelatedObjects": [
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": reader['Href'],
+                "LinkedObjectKey": reader['Key'],
+                "CommonName": reader['CommonName'],
+                "Relation": "Reader",
+                "MetaDataBson": None
+            },
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": card_format['Href'],
+                "LinkedObjectKey": card_format['Key'],
+                "CommonName": card_format['CommonName'],
+                "Relation": "CardFormat",
+                "MetaDataBson": None
+            },
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": controller['Href'],
+                "LinkedObjectKey": controller['Key'],
+                "CommonName": controller['CommonName'],
+                "Relation": "Controller",
+                "MetaDataBson": None
+            }
+        ],
+        "EventDataBsonBase64": event_data_base64
+    }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = SESSION.post(event_endpoint, headers=headers, json=payload)
+        response.raise_for_status()
+        logger.info("Card read simulation event published successfully.")
+        return True
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error during event publishing: {http_err}")
+        logger.error(f"Response Status Code: {response.status_code}")
+        logger.error(f"Response Content: {response.text}")
+        return False
+    except Exception as err:
+        logger.error(f"Error during event publishing: {err}")
+        return False
 
 # ----------------------------
 # Main Execution
