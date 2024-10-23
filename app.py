@@ -125,6 +125,7 @@ class User(db.Model):
 
 
 
+
 class UnlockToken(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     token = db.Column(db.String(36), unique=False, nullable=False)
@@ -906,6 +907,7 @@ def handle_webhook():
 
 
 @app.route('/unlock', methods=['GET'])
+
 def handle_unlock():
     token = request.args.get('token')
 
