@@ -936,7 +936,7 @@ def handle_unlock():
     logger.info(f"Simulating unlock for card number: {formatted_card_number}, facility code: {facility_code}")
 
     # Simulate the card read in a separate thread to avoid blocking
-    threading.Thread(target=simulate_unlock, args=(formatted_card_number, facility_code)).start()
+    threading.Thread(target=simulate_unlock, args=(card_number, facility_code)).start()
 
     return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
 
