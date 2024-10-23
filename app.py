@@ -1027,14 +1027,10 @@ def create_user_endpoint():
     logger.info(f"Processing user: {first_name} {last_name}, Email: {email}, Phone: {phone_number}")
 
     # Validate phone number format
-    if not phone_number.startswith('+') or not phone_number[1:].isdigit():
-        logger.warning(f"Invalid phone number format: {phone_number}")
-        return jsonify({'error': 'Invalid phone number format. Use E.164 format.'}), 400
+    
 
     # Optionally, validate phone number using Twilio Lookup API
-    if not validate_phone_number(client, phone_number):
-        return jsonify({'error': 'Invalid or non-mobile phone number.'}), 400
-
+    
     # Process user creation synchronously
     unlock_link = process_user_creation(
         first_name=first_name,
