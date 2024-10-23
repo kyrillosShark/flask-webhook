@@ -402,7 +402,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         "ActiveOn": active_on,
         "ExpiresOn": expires_on,
         "CardFormat": {
-            "LinkedObjectKey": hid_card_format['Key'],
+            "LinkedObjectKey": selected_card_format['Key'],
         },
         "AntiPassbackExempt": False,
         "ExtendedAccess": False,
@@ -929,10 +929,6 @@ def simulate_unlock(card_number, facility_code, issue_code):
                 logger.error("No Card Formats found.")
                 return
 
-            card_format = next((cf for cf in card_formats if cf.get('CommonName') == 'HID 26-bit'), None)
-            if not card_format:
-                logger.error("HID 26-bit Card Format not found.")
-                return
 
             controllers = get_controllers(BASE_ADDRESS, access_token, instance_id)
             if not controllers:
