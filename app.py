@@ -337,6 +337,11 @@ def get_access_levels(base_address, access_token, instance_id):
             access_levels = []
 
         logger.info(f"Retrieved {len(access_levels)} access levels.")
+
+        # Log each access level's Key and Href
+        for al in access_levels:
+            logger.debug(f"Access Level: Key={al.get('Key')}, Href={al.get('Href')}, CommonName={al.get('CommonName')}")
+
         return access_levels
     except Exception as err:
         logger.error(f"Error retrieving access levels: {err}")
