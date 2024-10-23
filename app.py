@@ -112,14 +112,17 @@ class User(db.Model):
     last_name = db.Column(db.String(50), nullable=False)
     email = db.Column(db.String(120), unique=False, nullable=False)
     phone_number = db.Column(db.String(20), unique=False, nullable=False)
-    card_number = db.Column(db.BigInteger, unique=False, nullable=False)
-    facility_code = db.Column(db.Integer, unique=False, nullable=False)
+    facility_code = db.Column(db.Integer, nullable=False)
+    card_number = db.Column(db.Integer, unique=True, nullable=False)  # Raw 16-bit Card Number
+    formatted_card_number = db.Column(db.String(20), unique=True, nullable=False)  # 26-bit Formatted Card Number
     membership_start = db.Column(db.DateTime, nullable=False)
     membership_end = db.Column(db.DateTime, nullable=False)
 
     def is_membership_active(self):
         now = datetime.datetime.utcnow()
         return self.membership_start <= now <= self.membership_end
+
+
 
 class UnlockToken(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -277,13 +280,6 @@ def format_hid_26bit_h10301(facility_code, card_number):
     """
     Formats card credentials according to HID 26-bit H10301 format specifications.
     Standard 26 Bit Format: 1 even parity bit + 8 facility bits + 16 card number bits + 1 odd parity bit
-    
-    Args:
-        facility_code (int): Facility code (0-255)
-        card_number (int): Card number (0-65535)
-    Returns:
-        tuple: (formatted_number, error_message)
-        formatted_number is None if validation fails, otherwise returns a string
     """
     # Validate facility code range (8 bits)
     if not 0 <= facility_code <= 255:
@@ -298,22 +294,30 @@ def format_hid_26bit_h10301(facility_code, card_number):
     card_bits = format(card_number, '016b')
     
     # Combine into 24-bit string (excluding parity bits for now)
-    combined_bits = facility_bits + card_bits
+    combined_bits = facility_bits + card_bits  # 24 bits
     
     # Calculate even parity (left) for first 12 bits
-    even_parity = str(sum(int(bit) for bit in combined_bits[:12]) % 2)
+    first_12_bits = combined_bits[:12]
+    even_parity_bit = str(sum(int(bit) for bit in first_12_bits) % 2)
     
     # Calculate odd parity (right) for last 12 bits
-    odd_parity = str((sum(int(bit) for bit in combined_bits[12:]) + 1) % 2)
+    last_12_bits = combined_bits[12:]
+    odd_parity_bit = str((sum(int(bit) for bit in last_12_bits) + 1) % 2)
     
     # Assemble final 26-bit format
-    final_bits = even_parity + combined_bits + odd_parity
+    final_bits = even_parity_bit + combined_bits + odd_parity_bit  # 26 bits
     
-    # Convert binary to decimal and then to string
+    # Ensure final_bits is exactly 26 bits
+    assert len(final_bits) == 26, f"Final bits length is {len(final_bits)}, expected 26."
+    
+    # Convert binary to decimal
     decimal_value = int(final_bits, 2)
     formatted_number = str(decimal_value)
     
+    logger.debug(f"Formatted Number: {formatted_number} (Binary: {final_bits})")
+    
     return formatted_number, None
+
 
 def generate_card_number() -> int:
     """
@@ -336,7 +340,9 @@ def generate_card_number() -> int:
 
     # Generate 16-bit card number
     card_number = random.randint(0, 65535)
+    logger.debug(f"Generated card_number: {card_number}")
     return card_number
+
 
 
 def get_access_levels(base_address, access_token, instance_id):
@@ -383,22 +389,35 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     """
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
-    # Proceed to create user
-    card_number = generate_card_number()  # Now returns int
-    facility_code = FACILITY_CODE  # Fixed via environment variable
+    # ----------------------------
+    # Step 1: Generate and Format Card Number
+    # ----------------------------
 
-    # Format the card number
+    # Generate raw 16-bit card number
+    card_number = generate_card_number()  # Returns int within 0-65535
+    facility_code = FACILITY_CODE  # From environment variable
+    logger.debug(f"Generated Card Number: {card_number}, Facility Code: {facility_code}")
+
+    # Format the card number into a 26-bit number
     formatted_card_number, error_message = format_hid_26bit_h10301(facility_code, card_number)
 
     if formatted_card_number is None:
         logger.error(f"Error formatting card number: {error_message}")
         raise ValueError(error_message)
 
-    # Prepare the current and expiration times
+    logger.debug(f"Formatted Card Number (26-bit): {formatted_card_number}")
+
+    # ----------------------------
+    # Step 2: Prepare Active and Expiration Times
+    # ----------------------------
+
     active_on = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
     expires_on = (datetime.datetime.utcnow() + timedelta(hours=membership_duration_hours)).replace(microsecond=0).isoformat() + "Z"
 
-    # Retrieve card formats
+    # ----------------------------
+    # Step 3: Retrieve Card Formats
+    # ----------------------------
+
     card_formats = get_card_formats(base_address, access_token, instance_id)
     if not card_formats:
         logger.error("No card formats found.")
@@ -408,7 +427,10 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     selected_card_format = card_formats[0]
     logger.info(f"Using card format: {selected_card_format.get('CommonName')}")
 
-    # Prepare Card Assignment
+    # ----------------------------
+    # Step 4: Prepare Card Assignment Data
+    # ----------------------------
+
     card_assignment = {
         "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
         "EncodedCardNumber": int(formatted_card_number),
@@ -428,6 +450,10 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         "OriginalUseCount": None,
         "CurrentUseCount": 0,
     }
+
+    # ----------------------------
+    # Step 5: Prepare User Data for CRM API
+    # ----------------------------
 
     user_data = {
         "$type": "Feenics.Keep.WebApi.Model.PersonInfo, Feenics.Keep.WebApi.Model",
@@ -462,18 +488,26 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "$type": "Feenics.Keep.WebApi.Model.MetadataItem, Feenics.Keep.WebApi.Model",
                 "Application": "CustomApp",
                 "Values": json.dumps({
-                    "CardNumber": str(formatted_card_number),
-                    "FacilityCode": str(facility_code)
+                    "CardNumber": str(card_number),           # Raw 16-bit Card Number
+                    "FacilityCode": str(facility_code)        # Facility Code
                 }),
                 "ShouldPublishUpdateEvents": False
             }
         ]
     }
 
+    # ----------------------------
+    # Step 6: Define Headers for CRM API Request
+    # ----------------------------
+
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
+
+    # ----------------------------
+    # Step 7: Make CRM API Request to Create User
+    # ----------------------------
 
     try:
         response = SESSION.post(create_person_endpoint, headers=headers, json=user_data)
@@ -486,9 +520,12 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             raise Exception("User ID not found in the response.")
 
         logger.info(f"User '{first_name} {last_name}' created successfully with ID: {user_id}")
-        logger.info(f"Assigned Card Number: {formatted_card_number}, Facility Code: {facility_code}")
+        logger.info(f"Assigned Card Number: {card_number}, Facility Code: {facility_code}")
 
-        # Create User in local database
+        # ----------------------------
+        # Step 8: Create User in Local Database
+        # ----------------------------
+
         membership_start = datetime.datetime.utcnow()
         membership_end = membership_start + timedelta(hours=membership_duration_hours)
 
@@ -497,7 +534,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             last_name=last_name,
             email=email,
             phone_number=phone_number,
-            card_number=formatted_card_number,
+            card_number=card_number,                      # Raw 16-bit Card Number
+            formatted_card_number=formatted_card_number,  # 26-bit Formatted Card Number
             facility_code=facility_code,
             membership_start=membership_start,
             membership_end=membership_end
@@ -507,6 +545,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         db.session.commit()
 
         return user, user_id  # Return both user and user_id
+
     except requests.exceptions.HTTPError as http_err:
         logger.error(f"HTTP error during user creation: {http_err}")
         logger.error(f"Response Content: {response.text}")
