@@ -537,7 +537,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             email=email,
             phone_number=phone_number,
             card_number=card_number,                      # Raw 16-bit Card Number
-            formatted_card_number=formatted_card_number,  # 26-bit Formatted Card Number
+            formatted_card_number=card_number,  # 26-bit Formatted Card Number
             facility_code=facility_code,
             membership_start=membership_start,
             membership_end=membership_end
@@ -1035,7 +1035,7 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
 
     # Ensure formatted_card_number and facility_code are integers
     try:
-        card_number_int = int(formatted_card_number)
+        card_number_int = int(card_number)
         facility_code_int = int(facility_code)
     except ValueError as e:
         logger.error(f"Invalid formatted card number or facility code: {e}")
@@ -1126,7 +1126,7 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
 
     # Ensure formatted_card_number and facility_code are integers
     try:
-        card_number_int = int(formatted_card_number)
+        card_number_int = int(card_number)
         facility_code_int = int(facility_code)
     except ValueError as e:
         logger.error(f"Invalid formatted card number or facility code: {e}")
