@@ -904,6 +904,7 @@ def handle_webhook():
 
     return jsonify({'status': 'User creation in progress'}), 200
 
+
 @app.route('/unlock', methods=['GET'])
 def handle_unlock():
     token = request.args.get('token')
@@ -924,31 +925,34 @@ def handle_unlock():
         unlock_token.used = True
         db.session.commit()
 
+    # Retrieve both raw and formatted card numbers
     card_number = unlock_token.user.card_number
     facility_code = unlock_token.user.facility_code
+    formatted_card_number = unlock_token.user.formatted_card_number  # Retrieve the formatted card number
 
-    logger.info(f"Simulating unlock for card number: {card_number}, facility code: {facility_code}")
+    logger.info(f"Simulating unlock for card number: {formatted_card_number}, facility code: {facility_code}")
 
     # Simulate the card read in a separate thread to avoid blocking
-    threading.Thread(target=simulate_unlock, args=(card_number, facility_code)).start()
+    threading.Thread(target=simulate_unlock, args=(formatted_card_number, facility_code)).start()
 
     return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
 
-def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number):
+
+def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, formatted_card_number):
     """
-    Simulates a card read by publishing a simulateCardRead event.
+    Simulates a card read by publishing a simulateCardRead event using the formatted_card_number.
 
     Returns:
         bool: True if successful, False otherwise.
     """
     event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
 
-    # Ensure card_number and facility_code are integers
+    # Ensure formatted_card_number and facility_code are integers
     try:
-        card_number_int = int(card_number)
+        card_number_int = int(formatted_card_number)
         facility_code_int = int(facility_code)
     except ValueError as e:
-        logger.error(f"Invalid card number or facility code: {e}")
+        logger.error(f"Invalid formatted card number or facility code: {e}")
         return False
 
     # Construct EventData
@@ -1024,9 +1028,9 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         logger.error(f"Error during event publishing: {err}")
         return False
 
-def simulate_unlock(card_number, facility_code):
+def simulate_unlock(formatted_card_number, facility_code):
     """
-    Simulates the card read to unlock the door.
+    Simulates the card read to unlock the door using the formatted_card_number.
     """
     try:
         with app.app_context():
@@ -1094,7 +1098,7 @@ def simulate_unlock(card_number, facility_code):
                 controller=controller,
                 reason=SIMULATION_REASON,
                 facility_code=facility_code,
-                card_number=card_number
+                card_number=formatted_card_number  # Pass formatted_card_number instead of raw card_number
             )
 
             if success:
@@ -1104,6 +1108,7 @@ def simulate_unlock(card_number, facility_code):
 
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
+
 
 # ----------------------------
 # Main Execution
