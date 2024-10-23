@@ -315,7 +315,7 @@ def format_hid_26bit_h10301(facility_code, card_number):
     
     return formatted_number, None
 
-def generate_card_number():
+def generate_card_number() -> int:
     """
     Generates a random card number using facility code from environment variable.
     Returns:
@@ -337,6 +337,7 @@ def generate_card_number():
     # Generate 16-bit card number
     card_number = random.randint(0, 65535)
     return card_number
+
 
 def get_access_levels(base_address, access_token, instance_id):
     access_levels_endpoint = f"{base_address}/api/f/{instance_id}/accesslevels"
