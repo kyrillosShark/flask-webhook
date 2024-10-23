@@ -677,7 +677,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
                 "Application": "CustomApp",
                 "Values": json.dumps({
                     "CardNumber": str(card_number).zfill(5),        # 5-digit string
-                    "FacilityCode": str(facility_code).zfill(8)     # Zero-padded to 8 digits
+                    "FacilityCode": str(facility_code)             # **Removed zfill(8) to display as "128"**
                 }),
                 "ShouldPublishUpdateEvents": False
             }
