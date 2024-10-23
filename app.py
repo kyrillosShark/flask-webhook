@@ -319,7 +319,7 @@ def generate_card_number():
     """
     Generates a random card number using facility code from environment variable.
     Returns:
-        tuple: (facility_code, card_number)
+        int: card_number
     Raises:
         ValueError: If FACILITY_CODE environment variable is missing or invalid
     """
