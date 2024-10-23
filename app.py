@@ -49,6 +49,10 @@ TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
 UNLOCK_LINK_BASE_URL = os.getenv("UNLOCK_LINK_BASE_URL")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# New Environment Variables for Enhanced Functionality
+SEND_SMS = os.getenv("SEND_SMS", "true").lower() == "true"
+USE_TWILIO_LOOKUP = os.getenv("USE_TWILIO_LOOKUP", "false").lower() == "true"
+
 # Check for required environment variables
 required_env_vars = [
     'BASE_ADDRESS', 'INSTANCE_NAME', 'KEEP_USERNAME', 'KEEP_PASSWORD',
@@ -113,7 +117,7 @@ class User(db.Model):
     card_number = db.Column(db.Integer, unique=False, nullable=False)
     facility_code = db.Column(db.Integer, unique=False, nullable=False)
     # issue_code = db.Column(db.Integer, unique=False, nullable=True)  # Removed
-    
+
     membership_start = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)  # Updated
     membership_end = db.Column(db.DateTime, nullable=False)
 
@@ -392,13 +396,13 @@ def verify_parity(binary_string):
     first_half = binary_string[1:13]  # Skip the parity bit itself
     ones_count_even = first_half.count('1')
     even_parity_correct = (ones_count_even % 2 == 0 and binary_string[0] == '0') or \
-                         (ones_count_even % 2 == 1 and binary_string[0] == '1')
+                          (ones_count_even % 2 == 1 and binary_string[0] == '1')
 
     # Verify odd parity (last 13 bits)
     second_half = binary_string[13:25]  # Skip the parity bit itself
     ones_count_odd = second_half.count('1')
     odd_parity_correct = (ones_count_odd % 2 == 0 and binary_string[25] == '1') or \
-                        (ones_count_odd % 2 == 1 and binary_string[25] == '0')
+                         (ones_count_odd % 2 == 1 and binary_string[25] == '0')
 
     return even_parity_correct and odd_parity_correct
 
@@ -873,6 +877,10 @@ def send_sms(phone_number, unlock_link):
     """
     Sends an SMS message with the unlock link to the specified phone number.
     """
+    if not SEND_SMS:
+        logger.info(f"SMS sending is disabled. Unlock Link: {unlock_link}")
+        return True, "SMS sending disabled."
+
     message_body = f"Your unlock link: {unlock_link}"
 
     try:
@@ -883,14 +891,38 @@ def send_sms(phone_number, unlock_link):
             to=phone_number
         )
         logger.info(f"SMS sent to {phone_number}. SID: {message.sid}, Status: {message.status}")
-        return True  # Indicate success
+        return True, message.sid  # Indicate success and return message SID
     except Exception as e:
         logger.error(f"Failed to send SMS to {phone_number}: {e}")
         if hasattr(e, 'code'):
             logger.error(f"Twilio Error Code: {e.code}")
         if hasattr(e, 'msg'):
             logger.error(f"Twilio Error Message: {e.msg}")
-        return False  # Indicate failure
+        return False, str(e)  # Indicate failure and return error message
+
+def validate_phone_number(client, phone_number):
+    """
+    Validates the phone number using Twilio's Lookup API to ensure it's a mobile number.
+
+    Returns:
+        bool: True if valid mobile number, False otherwise.
+    """
+    if not USE_TWILIO_LOOKUP:
+        logger.info("Twilio Lookup API validation is disabled.")
+        return True  # Skip validation if not enabled
+
+    try:
+        logger.info(f"Validating phone number using Twilio Lookup API: {phone_number}")
+        number = client.lookups.phone_numbers(phone_number).fetch(type=['carrier'])
+        is_mobile = number.carrier['type'] == 'mobile'
+        if is_mobile:
+            logger.info(f"Phone number {phone_number} is valid and mobile.")
+        else:
+            logger.warning(f"Phone number {phone_number} is not a mobile number.")
+        return is_mobile
+    except Exception as e:
+        logger.error(f"Phone number validation failed for {phone_number}: {e}")
+        return False
 
 # ----------------------------
 # User Creation and Messaging Workflow
@@ -938,9 +970,9 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                     logger.error("Failed to generate unlock token for existing user.")
                     return None
                 unlock_link = create_unlock_link(unlock_token_str)
-                sms_sent = send_sms(phone_number, unlock_link)
+                sms_sent, sms_info = send_sms(phone_number, unlock_link)
                 if not sms_sent:
-                    logger.warning(f"SMS sending failed for existing user '{first_name} {last_name}'.")
+                    logger.warning(f"SMS sending failed for existing user '{first_name} {last_name}'. Info: {sms_info}")
                 return unlock_link
 
             # Step 5: Create the user via CRM API and store in local database
@@ -1004,6 +1036,7 @@ def reset_database():
     except Exception as e:
         logger.exception(f"Error resetting database: {e}")
         return jsonify({'error': 'Failed to reset database'}), 500
+
 # ----------------------------
 # New Flask Route for Testing
 # ----------------------------
@@ -1027,10 +1060,14 @@ def create_user_endpoint():
     logger.info(f"Processing user: {first_name} {last_name}, Email: {email}, Phone: {phone_number}")
 
     # Validate phone number format
-    
+    if not phone_number.startswith('+') or not phone_number[1:].isdigit():
+        logger.warning(f"Invalid phone number format: {phone_number}")
+        return jsonify({'error': 'Invalid phone number format. Use E.164 format.'}), 400
 
     # Optionally, validate phone number using Twilio Lookup API
-    
+    if not validate_phone_number(client, phone_number):
+        return jsonify({'error': 'Invalid or non-mobile phone number.'}), 400
+
     # Process user creation synchronously
     unlock_link = process_user_creation(
         first_name=first_name,
@@ -1047,7 +1084,6 @@ def create_user_endpoint():
         }), 200
     else:
         return jsonify({'error': 'User creation failed'}), 500
-
 
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
@@ -1071,6 +1107,15 @@ def handle_webhook():
     sync = request.args.get('sync', 'false').lower() == 'true'
 
     if sync:
+        # Validate phone number format
+        if not phone_number.startswith('+') or not phone_number[1:].isdigit():
+            logger.warning(f"Invalid phone number format: {phone_number}")
+            return jsonify({'error': 'Invalid phone number format. Use E.164 format.'}), 400
+
+        # Optionally, validate phone number using Twilio Lookup API
+        if not validate_phone_number(client, phone_number):
+            return jsonify({'error': 'Invalid or non-mobile phone number.'}), 400
+
         # Process synchronously and return the unlock link
         unlock_link = process_user_creation(
             first_name=first_name,
