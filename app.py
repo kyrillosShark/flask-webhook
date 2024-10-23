@@ -902,6 +902,101 @@ def simulate_unlock(card_number, facility_code, issue_code):
 
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
+def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number, issue_code):
+    """
+    Simulates a card read by publishing a simulateCardRead event.
+
+    Returns:
+        bool: True if successful, False otherwise.
+    """
+    event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
+
+    # Ensure card_number and facility_code are integers
+    try:
+        card_number_int = int(card_number)
+        facility_code_int = int(facility_code)
+        issue_code_int = int(issue_code) if issue_code else None
+    except ValueError as e:
+        logger.error(f"Invalid card number, facility code, or issue code: {e}")
+        return False
+
+    # Construct EventData
+    event_data = {
+        "Reason": reason,
+        "FacilityCode": facility_code_int,
+        "EncodedCardNumber": card_number_int,
+    }
+
+    # Include IssueCode if available
+    if issue_code_int is not None:
+        event_data["IssueCode"] = issue_code_int
+
+    logger.info(f"Event Data before encoding: {event_data}")
+
+    # Convert EventData to BSON and then to Base64
+    event_data_bson = BSON.encode(event_data)
+    event_data_base64 = base64.b64encode(event_data_bson).decode('utf-8')
+
+    logger.info(f"EventDataBsonBase64: {event_data_base64}")
+
+    # Construct the payload
+    payload = {
+        "$type": "Feenics.Keep.WebApi.Model.EventMessagePosting, Feenics.Keep.WebApi.Model",
+        "OccurredOn": datetime.datetime.now(timezone.utc).isoformat() + "Z",
+        "AppKey": "MercuryCommands",
+        "EventTypeMoniker": {
+            "$type": "Feenics.Keep.WebApi.Model.MonikerItem, Feenics.Keep.WebApi.Model",
+            "Namespace": "MercuryServiceCommands",
+            "Nickname": "mercury:command-simulateCardRead"
+        },
+        "RelatedObjects": [
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": reader['Href'],
+                "LinkedObjectKey": reader['Key'],
+                "CommonName": reader['CommonName'],
+                "Relation": "Reader",
+                "MetaDataBson": None
+            },
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": card_format['Href'],
+                "LinkedObjectKey": card_format['Key'],
+                "CommonName": card_format['CommonName'],
+                "Relation": "CardFormat",
+                "MetaDataBson": None
+            },
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": controller['Href'],
+                "LinkedObjectKey": controller['Key'],
+                "CommonName": controller['CommonName'],
+                "Relation": "Controller",
+                "MetaDataBson": None
+            }
+        ],
+        "EventDataBsonBase64": event_data_base64
+    }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = SESSION.post(event_endpoint, headers=headers, json=payload)
+        response.raise_for_status()
+        logger.info("Card read simulation event published successfully.")
+        return True
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error during event publishing: {http_err}")
+        logger.error(f"Response Status Code: {response.status_code}")
+        logger.error(f"Response Content: {response.text}")
+        return False
+    except Exception as err:
+        logger.error(f"Error during event publishing: {err}")
+        return False
+
 
 # ----------------------------
 # Main Execution
