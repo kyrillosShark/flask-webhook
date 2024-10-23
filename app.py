@@ -520,8 +520,10 @@ def assign_access_levels_to_user(base_address, access_token, instance_id, person
         logger.error("No valid access level Hrefs found.")
         raise ValueError("Access levels must include 'Href' fields.")
 
-    # If assigning multiple access levels, send as a list; otherwise, send as a single string
-    payload = access_level_hrefs if len(access_level_hrefs) > 1 else access_level_hrefs[0]
+    # Prepare the payload as a JSON object with 'accesslevels' key
+    payload = {
+        "accesslevels": access_level_hrefs
+    }
 
     # Logging for debugging
     logger.debug(f"Assign Endpoint: {assign_endpoint}")
