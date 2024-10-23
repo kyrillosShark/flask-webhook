@@ -112,9 +112,8 @@ class User(db.Model):
     last_name = db.Column(db.String(50), nullable=False)
     email = db.Column(db.String(120), unique=False, nullable=False)
     phone_number = db.Column(db.String(20), unique=False, nullable=False)
-    card_number = db.Column(db.Integer, unique=False, nullable=False)
+    card_number = db.Column(db.BigInteger, unique=False, nullable=False)
     facility_code = db.Column(db.Integer, unique=False, nullable=False)
-    #issue_code = db.Column(db.Integer, unique=False, nullable=True)
     membership_start = db.Column(db.DateTime, nullable=False)
     membership_end = db.Column(db.DateTime, nullable=False)
 
@@ -186,35 +185,6 @@ def get_access_token(base_address, instance_name, username, password):
     except Exception as err:
         logger.error(f"Error during CRM login: {err}")
         raise
-
-def get_instance_settings(base_address, access_token, instance_id):
-    """
-    Retrieves the instance settings, including IssueCodeSize.
-    """
-    settings_endpoint = f"{base_address}/api/f/{instance_id}/settings"
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = SESSION.get(settings_endpoint, headers=headers)
-        response.raise_for_status()
-        settings = response.json()
-        logger.info("Retrieved instance settings successfully.")
-        return settings
-    except Exception as err:
-        logger.error(f"Error retrieving instance settings: {err}")
-        raise
-
-def get_issue_code_size(settings):
-    """
-    Extracts the IssueCodeSize from the instance settings.
-    """
-    issue_code_size = settings.get('IssueCodeSize', 0)
-    logger.info(f"IssueCodeSize from instance settings: {issue_code_size}")
-    return issue_code_size
 
 def get_badge_types(base_address, access_token, instance_id):
     """
@@ -305,15 +275,16 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
 def format_hid_26bit_h10301(facility_code, card_number):
     """
     Formats card credentials according to HID 26-bit H10301 format specifications.
-    
+
     Args:
         facility_code (int): Facility code (0-255)
         card_number (int): Card number (0-65535)
-    
+
     Returns:
         tuple: (formatted_number, error_message)
         formatted_number is None if validation fails
     """
+    # Validate facility code range (8 bits)
     if not isinstance(facility_code, int):
         return None, "Facility code must be an integer."
     if not 0 <= facility_code <= 255:
@@ -324,34 +295,27 @@ def format_hid_26bit_h10301(facility_code, card_number):
         return None, "Card number must be an integer."
     if not 0 <= card_number <= 65535:
         return None, "Card number must be between 0 and 65535"
-    # Validate facility code range (8 bits)
-    if not 0 <= facility_code <= 255:
-        return None, "Facility code must be between 0 and 255"
-        
-    # Validate card number range (16 bits)
-    if not 0 <= card_number <= 65535:
-        return None, "Card number must be between 0 and 65535"
-    
+
     # Convert to binary strings, padding to required length
     facility_bits = format(facility_code, '08b')
     card_bits = format(card_number, '016b')
-    
+
     # Combine into 24-bit string (excluding parity bits for now)
     combined_bits = facility_bits + card_bits
-    
+
     # Calculate even parity (left) for first 12 bits
     even_parity = str(sum(int(bit) for bit in combined_bits[:12]) % 2)
-    
+
     # Calculate odd parity (right) for last 12 bits
     odd_parity = str((sum(int(bit) for bit in combined_bits[12:]) + 1) % 2)
-    
+
     # Assemble final 26-bit format
     final_bits = even_parity + combined_bits + odd_parity
-    
+
     # Convert to decimal for storage
     formatted_number = int(final_bits, 2)
-    
-    return formatted_number
+
+    return formatted_number, None
 
 def generate_card_number():
     """
@@ -362,7 +326,6 @@ def generate_card_number():
     """
     card_number = random.randint(0, 65535)  # 16 bits
     return card_number
-
 
 def get_access_levels(base_address, access_token, instance_id):
     access_levels_endpoint = f"{base_address}/api/f/{instance_id}/accesslevels"
@@ -399,7 +362,7 @@ def get_access_levels(base_address, access_token, instance_id):
         logger.error(f"Error retrieving access levels: {err}")
         raise
 
-def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours, issue_code_size):
+def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours):
     """
     Creates a new user in the Keep by Feenics system.
 
@@ -409,19 +372,15 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
     # Proceed to create user
-    card_number = generate_card_number()  # Now returns only card_number (int)
-    facility_code = FACILITY_CODE
-    logger.debug(f"Type of card_number: {type(card_number)}, Value: {card_number}")
-    logger.debug(f"Type of facility_code: {type(facility_code)}, Value: {facility_code}")
-# An integer from environment variable
-    card_number= format_hid_26bit_h10301(facility_code, card_number)
+    card_number = generate_card_number()  # Now returns int
+    facility_code = FACILITY_CODE  # Fixed via environment variable
 
-    # Generate IssueCode if required
-    if issue_code_size > 0:
-        max_issue_code = (1 << (issue_code_size * 8)) - 1  # Calculate max value based on size in bytes
-        issue_code = random.randint(1, max_issue_code)
-    else:
-        issue_code = None  # IssueCode not required
+    # Format the card number
+    formatted_card_number, error_message = format_hid_26bit_h10301(facility_code, card_number)
+
+    if formatted_card_number is None:
+        logger.error(f"Error formatting card number: {error_message}")
+        raise ValueError(error_message)
 
     # Prepare the current and expiration times
     active_on = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
@@ -440,8 +399,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     # Prepare Card Assignment
     card_assignment = {
         "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
-        "EncodedCardNumber": int(card_number),
-        "DisplayCardNumber": str(card_number),
+        "EncodedCardNumber": int(formatted_card_number),
+        "DisplayCardNumber": str(formatted_card_number),
         "FacilityCode": int(facility_code),
         "ActiveOn": active_on,
         "ExpiresOn": expires_on,
@@ -457,10 +416,6 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         "OriginalUseCount": None,
         "CurrentUseCount": 0,
     }
-
-    # Include IssueCode if required
-    if issue_code is not None:
-        card_assignment["IssueCode"] = int(issue_code)
 
     user_data = {
         "$type": "Feenics.Keep.WebApi.Model.PersonInfo, Feenics.Keep.WebApi.Model",
@@ -490,16 +445,13 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             }
         ],
         "CardAssignments": [card_assignment],
-        # Remove AccessLevelAssignments from here
-        # "AccessLevelAssignments": access_level_assignments,  # Remove this line
         "Metadata": [
             {
                 "$type": "Feenics.Keep.WebApi.Model.MetadataItem, Feenics.Keep.WebApi.Model",
                 "Application": "CustomApp",
                 "Values": json.dumps({
-                    "CardNumber": str(card_number),
-                    "FacilityCode": str(facility_code),
-                    "IssueCode": str(issue_code) if issue_code else None,
+                    "CardNumber": str(formatted_card_number),
+                    "FacilityCode": str(facility_code)
                 }),
                 "ShouldPublishUpdateEvents": False
             }
@@ -522,7 +474,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             raise Exception("User ID not found in the response.")
 
         logger.info(f"User '{first_name} {last_name}' created successfully with ID: {user_id}")
-        logger.info(f"Assigned Card Number: {card_number}, Facility Code: {facility_code}, IssueCode: {issue_code}")
+        logger.info(f"Assigned Card Number: {formatted_card_number}, Facility Code: {facility_code}")
 
         # Create User in local database
         membership_start = datetime.datetime.utcnow()
@@ -533,9 +485,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             last_name=last_name,
             email=email,
             phone_number=phone_number,
-            card_number=card_number,
+            card_number=formatted_card_number,
             facility_code=facility_code,
-            #issue_code=issue_code if issue_code else 0,
             membership_start=membership_start,
             membership_end=membership_end
         )
@@ -551,6 +502,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
         raise
+
 def assign_access_levels_to_user(base_address, access_token, instance_id, person_key, access_levels):
     """
     Assigns access levels to a person.
@@ -596,7 +548,6 @@ def assign_access_levels_to_user(base_address, access_token, instance_id, person
             logger.error(f"Error assigning access level to user {person_key}: {err}")
             raise
 
-
 def get_readers(base_address, access_token, instance_id):
     """
     Retrieves a list of available Readers.
@@ -632,7 +583,6 @@ def get_readers(base_address, access_token, instance_id):
     except Exception as err:
         logger.error(f"Error retrieving readers: {err}")
         raise
-
 
 def get_card_formats(base_address, access_token, instance_id):
     """
@@ -706,7 +656,6 @@ def get_controllers(base_address, access_token, instance_id):
         logger.error(f"Error retrieving controllers: {err}")
         raise
 
-
 def generate_unlock_token(user_id):
     """
     Generates a unique unlock token for the user and saves it to the database.
@@ -776,11 +725,7 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 password=KEEP_PASSWORD
             )
 
-            # Step 2: Retrieve Instance Settings
-            instance_settings = get_instance_settings(BASE_ADDRESS, access_token, instance_id)
-            issue_code_size = get_issue_code_size(instance_settings)
-
-            # Step 3: Get or Create Badge Type
+            # Step 2: Get or Create Badge Type
             badge_types = get_badge_types(BASE_ADDRESS, access_token, instance_id)
             badge_type_info = next((bt for bt in badge_types if bt.get("CommonName") == BADGE_TYPE_NAME), None)
 
@@ -793,19 +738,19 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                     # If Badge Type already exists (status code 409), retrieve its details
                     badge_type_info = get_badge_type_details(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
 
-            # Step 4: Check if user exists in the local database
+            # Step 3: Check if user exists in the local database
             existing_user = User.query.filter_by(email=email).first()
             if existing_user:
                 logger.info(f"User with email {email} already exists in the local database.")
                 return
 
-            # Step 5: Retrieve all access levels
+            # Step 4: Retrieve all access levels
             access_levels = get_access_levels(BASE_ADDRESS, access_token, instance_id)
             if not access_levels:
                 logger.error("No access levels found.")
                 raise Exception("No access levels available to assign to the user.")
 
-            # Step 6: Create the user via CRM API and store in local database
+            # Step 5: Create the user via CRM API and store in local database
             user, user_id = create_user(
                 base_address=BASE_ADDRESS,
                 access_token=access_token,
@@ -815,33 +760,30 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                 email=email,
                 phone_number=phone_number,
                 badge_type_info=badge_type_info,
-                membership_duration_hours=membership_duration_hours,
-                issue_code_size=issue_code_size
+                membership_duration_hours=membership_duration_hours
             )
 
-            # Step 7: Assign Access Levels to the User
+            # Step 6: Assign Access Levels to the User
             assign_access_levels_to_user(
-        base_address=BASE_ADDRESS,
-        access_token=access_token,
-        instance_id=instance_id,
-        person_key=user_id,
-        access_levels=access_levels
-    )
-            
+                base_address=BASE_ADDRESS,
+                access_token=access_token,
+                instance_id=instance_id,
+                person_key=user_id,
+                access_levels=access_levels
+            )
 
             # Optional: Wait for access levels to be processed
             time.sleep(2)
 
-            # Step 8: Generate Unlock Token and Link
+            # Step 7: Generate Unlock Token and Link
             unlock_token_str = generate_unlock_token(user.id)
             unlock_link = create_unlock_link(unlock_token_str)
 
-            # Step 9: Send SMS with Unlock Link
+            # Step 8: Send SMS with Unlock Link
             send_sms(phone_number, unlock_link)
 
     except Exception as e:
         logger.exception(f"Error in processing user creation: {e}")
-
 
 # ----------------------------
 # Unlock Token Management
@@ -931,16 +873,15 @@ def handle_unlock():
 
     card_number = unlock_token.user.card_number
     facility_code = unlock_token.user.facility_code
-    issue_code = unlock_token.user.issue_code
 
-    logger.info(f"Simulating unlock for card number: {card_number}, facility code: {facility_code}, issue code: {issue_code}")
+    logger.info(f"Simulating unlock for card number: {card_number}, facility code: {facility_code}")
 
     # Simulate the card read in a separate thread to avoid blocking
-    threading.Thread(target=simulate_unlock, args=(card_number, facility_code, issue_code)).start()
+    threading.Thread(target=simulate_unlock, args=(card_number, facility_code)).start()
 
     return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
 
-def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number, issue_code):
+def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number):
     """
     Simulates a card read by publishing a simulateCardRead event.
 
@@ -953,9 +894,8 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     try:
         card_number_int = int(card_number)
         facility_code_int = int(facility_code)
-        issue_code_int = int(issue_code) if issue_code else None
     except ValueError as e:
-        logger.error(f"Invalid card number, facility code, or issue code: {e}")
+        logger.error(f"Invalid card number or facility code: {e}")
         return False
 
     # Construct EventData
@@ -964,10 +904,6 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         "FacilityCode": facility_code_int,
         "EncodedCardNumber": card_number_int,
     }
-
-    # Include IssueCode if available
-    if issue_code_int is not None:
-        event_data["IssueCode"] = issue_code_int
 
     logger.info(f"Event Data before encoding: {event_data}")
 
@@ -1034,7 +970,8 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     except Exception as err:
         logger.error(f"Error during event publishing: {err}")
         return False
-def simulate_unlock(card_number, facility_code, issue_code):
+
+def simulate_unlock(card_number, facility_code):
     """
     Simulates the card read to unlock the door.
     """
@@ -1104,8 +1041,7 @@ def simulate_unlock(card_number, facility_code, issue_code):
                 controller=controller,
                 reason=SIMULATION_REASON,
                 facility_code=facility_code,
-                card_number=card_number,
-                issue_code=issue_code
+                card_number=card_number
             )
 
             if success:
@@ -1115,7 +1051,6 @@ def simulate_unlock(card_number, facility_code, issue_code):
 
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
-
 
 # ----------------------------
 # Main Execution
