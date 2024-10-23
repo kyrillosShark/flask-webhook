@@ -272,60 +272,71 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
 
     raise Exception(f"Badge Type '{badge_type_name}' not found after creation.")
 
+
 def format_hid_26bit_h10301(facility_code, card_number):
     """
     Formats card credentials according to HID 26-bit H10301 format specifications.
-
+    Standard 26 Bit Format: 1 even parity bit + 8 facility bits + 16 card number bits + 1 odd parity bit
+    
     Args:
         facility_code (int): Facility code (0-255)
         card_number (int): Card number (0-65535)
-
     Returns:
         tuple: (formatted_number, error_message)
-        formatted_number is None if validation fails
+        formatted_number is None if validation fails, otherwise returns a string
     """
     # Validate facility code range (8 bits)
-    if not isinstance(facility_code, int):
-        return None, "Facility code must be an integer."
     if not 0 <= facility_code <= 255:
         return None, "Facility code must be between 0 and 255"
-
+    
     # Validate card number range (16 bits)
-    if not isinstance(card_number, int):
-        return None, "Card number must be an integer."
     if not 0 <= card_number <= 65535:
         return None, "Card number must be between 0 and 65535"
-
+    
     # Convert to binary strings, padding to required length
     facility_bits = format(facility_code, '08b')
     card_bits = format(card_number, '016b')
-
+    
     # Combine into 24-bit string (excluding parity bits for now)
     combined_bits = facility_bits + card_bits
-
+    
     # Calculate even parity (left) for first 12 bits
     even_parity = str(sum(int(bit) for bit in combined_bits[:12]) % 2)
-
+    
     # Calculate odd parity (right) for last 12 bits
     odd_parity = str((sum(int(bit) for bit in combined_bits[12:]) + 1) % 2)
-
+    
     # Assemble final 26-bit format
     final_bits = even_parity + combined_bits + odd_parity
-
-    # Convert to decimal for storage
-    formatted_number = int(final_bits, 2)
-
+    
+    # Convert binary to decimal and then to string
+    decimal_value = int(final_bits, 2)
+    formatted_number = str(decimal_value)
+    
     return formatted_number, None
 
 def generate_card_number():
     """
-    Generates a random card number within the valid HID 26-bit format range.
-
+    Generates a random card number using facility code from environment variable.
     Returns:
-        int: card_number
+        tuple: (facility_code, card_number)
+    Raises:
+        ValueError: If FACILITY_CODE environment variable is missing or invalid
     """
-    card_number = random.randint(0, 65535)  # 16 bits
-    return card_number
+    try:
+        facility_code = int(os.environ['FACILITY_CODE'])
+        if not 0 <= facility_code <= 255:
+            raise ValueError("FACILITY_CODE must be between 0 and 255")
+    except KeyError:
+        raise ValueError("FACILITY_CODE environment variable is not set")
+    except ValueError as e:
+        if str(e).startswith("FACILITY_CODE must be"):
+            raise
+        raise ValueError("FACILITY_CODE environment variable must be a valid integer")
+
+    # Generate 16-bit card number
+    card_number = random.randint(0, 65535)
+    return facility_code, card_number
 
 def get_access_levels(base_address, access_token, instance_id):
     access_levels_endpoint = f"{base_address}/api/f/{instance_id}/accesslevels"
