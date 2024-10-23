@@ -399,9 +399,9 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
     # Proceed to create user
-    card_number = generate_card_number()
-    facility_code = FACILITY_CODE
-    card_number = format_hid_26bit_h10301(card_number, facility_code)
+    card_number = generate_card_number()  # Now returns only card_number (int)
+    facility_code = FACILITY_CODE  # An integer from environment variable
+    formatted_card_number, error_message = format_hid_26bit_h10301(facility_code, card_number)
 
     # Generate IssueCode if required
     if issue_code_size > 0:
