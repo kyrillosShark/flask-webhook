@@ -1100,7 +1100,7 @@ def simulate_unlock(formatted_card_number, facility_code):
                 controller=controller,
                 reason=SIMULATION_REASON,
                 facility_code=facility_code,
-                card_number=formatted_card_number  # Pass formatted_card_number instead of raw card_number
+                formatted_card_number=formatted_card_number  # Pass formatted_card_number instead of raw card_number
             )
 
             if success:
