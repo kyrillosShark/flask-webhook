@@ -302,15 +302,57 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
 
     raise Exception(f"Badge Type '{badge_type_name}' not found after creation.")
 
+def format_hid_26bit_h10301(facility_code, card_number):
+    """
+    Formats card credentials according to HID 26-bit H10301 format specifications.
+    
+    Args:
+        facility_code (int): Facility code (0-255)
+        card_number (int): Card number (0-65535)
+    
+    Returns:
+        tuple: (formatted_number, error_message)
+        formatted_number is None if validation fails
+    """
+    # Validate facility code range (8 bits)
+    if not 0 <= facility_code <= 255:
+        return None, "Facility code must be between 0 and 255"
+        
+    # Validate card number range (16 bits)
+    if not 0 <= card_number <= 65535:
+        return None, "Card number must be between 0 and 65535"
+    
+    # Convert to binary strings, padding to required length
+    facility_bits = format(facility_code, '08b')
+    card_bits = format(card_number, '016b')
+    
+    # Combine into 24-bit string (excluding parity bits for now)
+    combined_bits = facility_bits + card_bits
+    
+    # Calculate even parity (left) for first 12 bits
+    even_parity = str(sum(int(bit) for bit in combined_bits[:12]) % 2)
+    
+    # Calculate odd parity (right) for last 12 bits
+    odd_parity = str((sum(int(bit) for bit in combined_bits[12:]) + 1) % 2)
+    
+    # Assemble final 26-bit format
+    final_bits = even_parity + combined_bits + odd_parity
+    
+    # Convert to decimal for storage
+    formatted_number = int(final_bits, 2)
+    
+    return formatted_number, None
+
 def generate_card_number():
     """
-    Generates a random card number within the valid range.
-
+    Generates a random card number within the valid HID 26-bit format range.
+    
     Returns:
-        int: A card number in the range of 1 to 65535.
+        tuple: (facility_code, card_number)
     """
-    card_number = random.randint(1, 65535)
-    return card_number
+    facility_code = random.randint(0, 255)  # 8 bits
+    card_number = random.randint(0, 65535)  # 16 bits
+    return facility_code, card_number
 
 def get_access_levels(base_address, access_token, instance_id):
     access_levels_endpoint = f"{base_address}/api/f/{instance_id}/accesslevels"
