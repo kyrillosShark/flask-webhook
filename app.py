@@ -510,7 +510,7 @@ def assign_access_levels_to_user(base_address, access_token, instance_id, person
 
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "Content-Type": "text/plain"  # Set Content-Type to text/plain
+        "Content-Type": "application/json"
     }
 
     # Prepare the list of access level Hrefs
@@ -520,24 +520,25 @@ def assign_access_levels_to_user(base_address, access_token, instance_id, person
         logger.error("No valid access level Hrefs found.")
         raise ValueError("Access levels must include 'Href' fields.")
 
-    # Since the API seems to expect a plain string, we'll join multiple Hrefs
-    payload = "\n".join(access_level_hrefs)
+    for href in access_level_hrefs:
+        # The payload is a JSON-encoded string of the access level Href
+        payload = json.dumps(href)
 
-    # Logging for debugging
-    logger.debug(f"Assign Endpoint: {assign_endpoint}")
-    logger.debug(f"Access Level Hrefs Payload:\n{payload}")
+        # Logging for debugging
+        logger.debug(f"Assign Endpoint: {assign_endpoint}")
+        logger.debug(f"Access Level Href Payload: {payload}")
 
-    try:
-        response = SESSION.put(assign_endpoint, headers=headers, data=payload)
-        response.raise_for_status()
-        logger.info(f"Access levels assigned to user {person_key} successfully.")
-    except requests.exceptions.HTTPError as http_err:
-        logger.error(f"HTTP error during access level assignment: {http_err}")
-        logger.error(f"Response Content: {response.text}")
-        raise
-    except Exception as err:
-        logger.error(f"Error assigning access levels to user {person_key}: {err}")
-        raise
+        try:
+            response = SESSION.put(assign_endpoint, headers=headers, data=payload)
+            response.raise_for_status()
+            logger.info(f"Access level assigned to user {person_key} successfully.")
+        except requests.exceptions.HTTPError as http_err:
+            logger.error(f"HTTP error during access level assignment: {http_err}")
+            logger.error(f"Response Content: {response.text}")
+            raise
+        except Exception as err:
+            logger.error(f"Error assigning access level to user {person_key}: {err}")
+            raise
 
 
 def get_readers(base_address, access_token, instance_id):
