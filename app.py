@@ -400,7 +400,10 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
 
     # Proceed to create user
     card_number = generate_card_number()  # Now returns only card_number (int)
-    facility_code = FACILITY_CODE  # An integer from environment variable
+    facility_code = FACILITY_CODE
+    logger.debug(f"Type of card_number: {type(card_number)}, Value: {card_number}")
+    logger.debug(f"Type of facility_code: {type(facility_code)}, Value: {facility_code}")
+# An integer from environment variable
     formatted_card_number, error_message = format_hid_26bit_h10301(facility_code, card_number)
 
     # Generate IssueCode if required
