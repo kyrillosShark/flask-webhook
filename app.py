@@ -336,7 +336,7 @@ def generate_card_number():
 
     # Generate 16-bit card number
     card_number = random.randint(0, 65535)
-    return facility_code, card_number
+    return card_number
 
 def get_access_levels(base_address, access_token, instance_id):
     access_levels_endpoint = f"{base_address}/api/f/{instance_id}/accesslevels"
