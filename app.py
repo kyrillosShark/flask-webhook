@@ -908,6 +908,7 @@ def handle_webhook():
 
 @app.route('/unlock', methods=['GET'])
 
+@app.route('/unlock', methods=['GET'])
 def handle_unlock():
     token = request.args.get('token')
 
@@ -938,6 +939,89 @@ def handle_unlock():
     threading.Thread(target=simulate_unlock, args=(formatted_card_number, facility_code)).start()
 
     return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
+
+def simulate_unlock(formatted_card_number, facility_code):
+    """
+    Simulates the card read to unlock the door using the formatted_card_number.
+    """
+    try:
+        with app.app_context():
+            # Authenticate
+            access_token, instance_id = get_access_token(
+                base_address=BASE_ADDRESS,
+                instance_name=INSTANCE_NAME,
+                username=KEEP_USERNAME,
+                password=KEEP_PASSWORD
+            )
+
+            # Retrieve required components
+            readers = get_readers(BASE_ADDRESS, access_token, instance_id)
+            if not readers:
+                logger.error("No Readers found.")
+                return
+
+            # Log available readers
+            logger.info("Available Readers:")
+            for reader_item in readers:
+                logger.info(f"Reader Name: {reader_item.get('CommonName')}, Key: {reader_item.get('Key')}")
+
+            # Specify the reader's name
+            reader_name = 'Front door'  # Replace with your reader's name from logs
+            reader = next((r for r in readers if r.get('CommonName') == reader_name), None)
+            if not reader:
+                logger.warning(f"Specified Reader '{reader_name}' not found. Using the first available reader.")
+                reader = readers[0]
+            logger.info(f"Using reader: {reader.get('CommonName')}")
+
+            card_formats = get_card_formats(BASE_ADDRESS, access_token, instance_id)
+            if not card_formats:
+                logger.error("No Card Formats found.")
+                return
+
+            # Use the first available card format
+            card_format = card_formats[0]
+            logger.info(f"Using card format: {card_format.get('CommonName')}")
+
+            controllers = get_controllers(BASE_ADDRESS, access_token, instance_id)
+            if not controllers:
+                logger.error("No Controllers found.")
+                return
+
+            # Log available controllers
+            logger.info("Available Controllers:")
+            for controller_item in controllers:
+                logger.info(f"Controller Name: {controller_item.get('CommonName')}, Key: {controller_item.get('Key')}")
+
+            # Specify the controller's name
+            controller_name = 'Controller'  # Replace with your controller's name from logs
+            controller = next((c for c in controllers if c.get('CommonName') == controller_name), None)
+            if not controller:
+                logger.warning(f"Specified Controller '{controller_name}' not found. Using the first available controller.")
+                controller = controllers[0]
+            logger.info(f"Using controller: {controller.get('CommonName')}")
+
+            # Simulate Card Read
+            success = simulate_card_read(
+                base_address=BASE_ADDRESS,
+                access_token=access_token,
+                instance_id=instance_id,
+                reader=reader,
+                card_format=card_format,
+                controller=controller,
+                reason=SIMULATION_REASON,
+                facility_code=facility_code,
+                formatted_card_number=formatted_card_number  # Correct argument
+            )
+
+            if success:
+                logger.info("Unlock simulation successful.")
+            else:
+                logger.error("Unlock simulation failed.")
+
+    except Exception as e:
+        logger.exception(f"Error in simulating unlock: {e}")
+
+
 
 
 def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, formatted_card_number):
@@ -1030,87 +1114,96 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         logger.error(f"Error during event publishing: {err}")
         return False
 
-def simulate_unlock(formatted_card_number, facility_code):
+
+def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, formatted_card_number):
     """
-    Simulates the card read to unlock the door using the formatted_card_number.
+    Simulates a card read by publishing a simulateCardRead event using the formatted_card_number.
+
+    Returns:
+        bool: True if successful, False otherwise.
     """
+    event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
+
+    # Ensure formatted_card_number and facility_code are integers
     try:
-        with app.app_context():
-            # Authenticate
-            access_token, instance_id = get_access_token(
-                base_address=BASE_ADDRESS,
-                instance_name=INSTANCE_NAME,
-                username=KEEP_USERNAME,
-                password=KEEP_PASSWORD
-            )
+        card_number_int = int(formatted_card_number)
+        facility_code_int = int(facility_code)
+    except ValueError as e:
+        logger.error(f"Invalid formatted card number or facility code: {e}")
+        return False
 
-            # Retrieve required components
-            readers = get_readers(BASE_ADDRESS, access_token, instance_id)
-            if not readers:
-                logger.error("No Readers found.")
-                return
+    # Construct EventData
+    event_data = {
+        "Reason": reason,
+        "FacilityCode": facility_code_int,
+        "EncodedCardNumber": card_number_int,
+    }
 
-            # Log available readers
-            logger.info("Available Readers:")
-            for reader_item in readers:
-                logger.info(f"Reader Name: {reader_item.get('CommonName')}, Key: {reader_item.get('Key')}")
+    logger.info(f"Event Data before encoding: {event_data}")
 
-            # Specify the reader's name
-            reader_name = 'Front door'  # Replace with your reader's name from logs
-            reader = next((r for r in readers if r.get('CommonName') == reader_name), None)
-            if not reader:
-                logger.warning(f"Specified Reader '{reader_name}' not found. Using the first available reader.")
-                reader = readers[0]
-            logger.info(f"Using reader: {reader.get('CommonName')}")
+    # Convert EventData to BSON and then to Base64
+    event_data_bson = BSON.encode(event_data)
+    event_data_base64 = base64.b64encode(event_data_bson).decode('utf-8')
 
-            card_formats = get_card_formats(BASE_ADDRESS, access_token, instance_id)
-            if not card_formats:
-                logger.error("No Card Formats found.")
-                return
+    logger.info(f"EventDataBsonBase64: {event_data_base64}")
 
-            # Use the first available card format
-            card_format = card_formats[0]
-            logger.info(f"Using card format: {card_format.get('CommonName')}")
+    # Construct the payload
+    payload = {
+        "$type": "Feenics.Keep.WebApi.Model.EventMessagePosting, Feenics.Keep.WebApi.Model",
+        "OccurredOn": datetime.datetime.utcnow().replace(microsecond=0).isoformat() + 'Z',
+        "AppKey": "MercuryCommands",
+        "EventTypeMoniker": {
+            "$type": "Feenics.Keep.WebApi.Model.MonikerItem, Feenics.Keep.WebApi.Model",
+            "Namespace": "MercuryServiceCommands",
+            "Nickname": "mercury:command-simulateCardRead"
+        },
+        "RelatedObjects": [
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": reader['Href'],
+                "LinkedObjectKey": reader['Key'],
+                "CommonName": reader['CommonName'],
+                "Relation": "Reader",
+                "MetaDataBson": None
+            },
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": card_format['Href'],
+                "LinkedObjectKey": card_format['Key'],
+                "CommonName": card_format['CommonName'],
+                "Relation": "CardFormat",
+                "MetaDataBson": None
+            },
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": controller['Href'],
+                "LinkedObjectKey": controller['Key'],
+                "CommonName": controller['CommonName'],
+                "Relation": "Controller",
+                "MetaDataBson": None
+            }
+        ],
+        "EventDataBsonBase64": event_data_base64
+    }
 
-            controllers = get_controllers(BASE_ADDRESS, access_token, instance_id)
-            if not controllers:
-                logger.error("No Controllers found.")
-                return
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
 
-            # Log available controllers
-            logger.info("Available Controllers:")
-            for controller_item in controllers:
-                logger.info(f"Controller Name: {controller_item.get('CommonName')}, Key: {controller_item.get('Key')}")
-
-            # Specify the controller's name
-            controller_name = 'Controller'  # Replace with your controller's name from logs
-            controller = next((c for c in controllers if c.get('CommonName') == controller_name), None)
-            if not controller:
-                logger.warning(f"Specified Controller '{controller_name}' not found. Using the first available controller.")
-                controller = controllers[0]
-            logger.info(f"Using controller: {controller.get('CommonName')}")
-
-            # Simulate Card Read
-            success = simulate_card_read(
-                base_address=BASE_ADDRESS,
-                access_token=access_token,
-                instance_id=instance_id,
-                reader=reader,
-                card_format=card_format,
-                controller=controller,
-                reason=SIMULATION_REASON,
-                facility_code=facility_code,
-                formatted_card_number=formatted_card_number  # Pass formatted_card_number instead of raw card_number
-            )
-
-            if success:
-                logger.info("Unlock simulation successful.")
-            else:
-                logger.error("Unlock simulation failed.")
-
-    except Exception as e:
-        logger.exception(f"Error in simulating unlock: {e}")
-
+    try:
+        response = SESSION.post(event_endpoint, headers=headers, json=payload)
+        response.raise_for_status()
+        logger.info("Card read simulation event published successfully.")
+        return True
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error during event publishing: {http_err}")
+        logger.error(f"Response Status Code: {response.status_code}")
+        logger.error(f"Response Content: {response.text}")
+        return False
+    except Exception as err:
+        logger.error(f"Error during event publishing: {err}")
+        return False
 
 # ----------------------------
 # Main Execution
