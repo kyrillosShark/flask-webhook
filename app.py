@@ -414,7 +414,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     logger.debug(f"Type of card_number: {type(card_number)}, Value: {card_number}")
     logger.debug(f"Type of facility_code: {type(facility_code)}, Value: {facility_code}")
 # An integer from environment variable
-    formatted_card_number, error_message = format_hid_26bit_h10301(facility_code, card_number)
+    card_number= format_hid_26bit_h10301(facility_code, card_number)
 
     # Generate IssueCode if required
     if issue_code_size > 0:
