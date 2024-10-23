@@ -8,7 +8,6 @@ import logging
 import threading
 import datetime
 from datetime import timezone, timedelta
-from urllib.parse import quote_plus
 
 from flask import Flask, request, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
@@ -247,7 +246,6 @@ def get_badge_types(base_address, access_token, instance_id):
         logger.error(f"Error retrieving badge types: {err}")
         raise
 
-
 def create_badge_type(base_address, access_token, instance_id, badge_type_name):
     """
     Creates a new Badge Type in the Keep by Feenics system.
@@ -343,47 +341,16 @@ def get_access_levels(base_address, access_token, instance_id):
         logger.error(f"Error retrieving access levels: {err}")
         raise
 
-
 def create_user(base_address, access_token, instance_id, first_name, last_name, email, phone_number, badge_type_info, membership_duration_hours, issue_code_size):
     """
     Creates a new user in the Keep by Feenics system with access to all access levels.
-    If the user already exists, it retrieves the existing user.
 
     Returns:
-        User: The created or existing User object.
+        User: The created User object.
     """
     create_person_endpoint = f"{base_address}/api/f/{instance_id}/people"
 
-    # Step 1: Check if the user already exists
-    existing_user_external = find_user_by_email(base_address, access_token, instance_id, email)
-    if existing_user_external:
-        # User exists externally, now check local DB
-        user = User.query.filter_by(email=email).first()
-        if user:
-            logger.info(f"User '{email}' already exists in the local database.")
-            return user
-        else:
-            # Synchronize with local DB
-            membership_start = datetime.datetime.utcnow()
-            membership_end = membership_start + timedelta(hours=membership_duration_hours)
-
-            user = User(
-                first_name=existing_user_external.get('GivenName', first_name),
-                last_name=existing_user_external.get('Surname', last_name),
-                email=email,
-                phone_number=phone_number,
-                card_number=existing_user_external.get('CardNumber', generate_card_number()),
-                facility_code=FACILITY_CODE,
-                issue_code=existing_user_external.get('IssueCode', 0),
-                membership_start=membership_start,
-                membership_end=membership_end
-            )
-            db.session.add(user)
-            db.session.commit()
-            logger.info(f"Existing user '{email}' synchronized to the local database.")
-            return user
-
-    # Step 2: User does not exist, proceed to create
+    # Proceed to create user
     card_number = generate_card_number()
     facility_code = FACILITY_CODE
 
@@ -532,40 +499,12 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
 
         return user
     except requests.exceptions.HTTPError as http_err:
-        if response.status_code == 409:
-            logger.error(f"Conflict Error: User with email {email} already exists.")
-            # Handle conflict, possibly by retrieving the existing user
-            existing_user_external = find_user_by_email(base_address, access_token, instance_id, email)
-            if existing_user_external:
-                # Proceed to synchronize or update if necessary
-                user = User.query.filter_by(email=email).first()
-                if not user:
-                    # Add to local DB
-                    membership_start = datetime.datetime.utcnow()
-                    membership_end = membership_start + timedelta(hours=membership_duration_hours)
-
-                    user = User(
-                        first_name=existing_user_external.get('GivenName', first_name),
-                        last_name=existing_user_external.get('Surname', last_name),
-                        email=email,
-                        phone_number=phone_number,
-                        card_number=existing_user_external.get('CardNumber', generate_card_number()),
-                        facility_code=FACILITY_CODE,
-                        issue_code=existing_user_external.get('IssueCode', 0),
-                        membership_start=membership_start,
-                        membership_end=membership_end
-                    )
-                    db.session.add(user)
-                    db.session.commit()
-                    logger.info(f"Existing user '{email}' added to the local database.")
-                return user
         logger.error(f"HTTP error during user creation: {http_err}")
         logger.error(f"Response Content: {response.text}")
         raise
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
         raise
-
 
 def get_readers(base_address, access_token, instance_id):
     """
@@ -627,7 +566,6 @@ def get_card_formats(base_address, access_token, instance_id):
     except Exception as err:
         logger.error(f"Error retrieving card formats: {err}")
         raise
-
 
 def get_controllers(base_address, access_token, instance_id):
     """
@@ -835,10 +773,10 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
                     # If Badge Type already exists (status code 409), retrieve its details
                     badge_type_info = get_badge_type_details(BASE_ADDRESS, access_token, instance_id, BADGE_TYPE_NAME)
 
-            # Step 4: Check if user exists in the database
+            # Step 4: Check if user exists in the local database
             existing_user = User.query.filter_by(email=email).first()
             if existing_user:
-                logger.info(f"User with email {email} already exists.")
+                logger.info(f"User with email {email} already exists in the local database.")
                 return
 
             # Create the user via CRM API and store in local database
@@ -993,6 +931,9 @@ def simulate_unlock(card_number, facility_code, issue_code):
                 logger.error("No Card Formats found.")
                 return
 
+            # Use the first available card format
+            card_format = card_formats[0]
+            logger.info(f"Using card format: {card_format.get('CommonName')}")
 
             controllers = get_controllers(BASE_ADDRESS, access_token, instance_id)
             if not controllers:
@@ -1026,44 +967,6 @@ def simulate_unlock(card_number, facility_code, issue_code):
 
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
-def find_user_by_email(base_address, access_token, instance_id, email):
-    """
-    Searches for a user by email in the Keep by Feenics system.
-
-    Returns:
-        dict or None: User data if found, else None.
-    """
-    search_endpoint = f"{base_address}/api/f/{instance_id}/people"
-    params = {
-        '$filter': f"Addresses/any(a: a/MailTo eq '{email}')"
-    }
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = SESSION.get(search_endpoint, headers=headers, params=params)
-        response.raise_for_status()
-        search_results = response.json()
-
-        # The response contains a 'value' key with a list of users
-        users = search_results.get('value', [])
-
-        if users:
-            logger.info(f"User with email {email} already exists in the external system.")
-            return users[0]  # Return the first matching user
-        else:
-            logger.info(f"No existing user found with email {email}.")
-            return None
-    except requests.exceptions.HTTPError as http_err:
-        logger.error(f"HTTP error during user search: {http_err}")
-        logger.error(f"Response Content: {response.text}")
-        raise
-    except Exception as err:
-        logger.error(f"Error during user search: {err}")
-        raise
 
 # ----------------------------
 # Main Execution
