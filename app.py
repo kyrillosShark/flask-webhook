@@ -435,8 +435,8 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
 
     card_assignment = {
         "$type": "Feenics.Keep.WebApi.Model.CardAssignmentInfo, Feenics.Keep.WebApi.Model",
-        "EncodedCardNumber": int(formatted_card_number),
-        "DisplayCardNumber": str(formatted_card_number),
+        "EncodedCardNumber": int(card_number),
+        "DisplayCardNumber": str(card_number),
         "FacilityCode": int(facility_code),
         "ActiveOn": active_on,
         "ExpiresOn": expires_on,
@@ -1010,7 +1010,7 @@ def simulate_unlock(formatted_card_number, facility_code):
                 controller=controller,
                 reason=SIMULATION_REASON,
                 facility_code=facility_code,
-                formatted_card_number=formatted_card_number  # Correct argument
+                formatted_card_number=card_number  # Correct argument
             )
 
             if success:
