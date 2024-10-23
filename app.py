@@ -341,7 +341,7 @@ def format_hid_26bit_h10301(facility_code, card_number):
     # Convert to decimal for storage
     formatted_number = int(final_bits, 2)
     
-    return formatted_number, None
+    return formatted_number
 
 def generate_card_number():
     """
