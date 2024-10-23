@@ -314,6 +314,16 @@ def format_hid_26bit_h10301(facility_code, card_number):
         tuple: (formatted_number, error_message)
         formatted_number is None if validation fails
     """
+    if not isinstance(facility_code, int):
+        return None, "Facility code must be an integer."
+    if not 0 <= facility_code <= 255:
+        return None, "Facility code must be between 0 and 255"
+
+    # Validate card number range (16 bits)
+    if not isinstance(card_number, int):
+        return None, "Card number must be an integer."
+    if not 0 <= card_number <= 65535:
+        return None, "Card number must be between 0 and 65535"
     # Validate facility code range (8 bits)
     if not 0 <= facility_code <= 255:
         return None, "Facility code must be between 0 and 255"
