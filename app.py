@@ -490,38 +490,42 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
         raise
-def assign_access_levels_to_user_with_dates(base_address, access_token, instance_id, person_key, access_levels, active_on, expires_on):
+def assign_access_levels_to_user(base_address, access_token, instance_id, person_key, access_levels):
     """
-    Assigns access levels to a person with active and expiration dates.
+    Assigns access levels to a person without setting active and expiration dates.
+
+    Args:
+        base_address (str): Base URL of the API.
+        access_token (str): Bearer token for authentication.
+        instance_id (str): Instance ID from the API.
+        person_key (str): The unique key of the person (user).
+        access_levels (list): List of access level objects, each containing an 'Href'.
     """
-    # Corrected endpoint
     assign_endpoint = f"{base_address}/api/f/{instance_id}/people/{person_key}/accesslevels"
 
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
-    
-    # Prepare the list of access level assignments
-    access_level_assignments = []
-    for al in access_levels:
-        assignment = {
-            "$type": "Feenics.Keep.WebApi.Model.AccessLevelAssignmentInfo, Feenics.Keep.WebApi.Model",
-            "PersonKey": person_key,  # Include PersonKey in the payload
-            "AccessLevelKey": al.get("Key"),
-            "ActiveOn": active_on,
-            "ExpiresOn": expires_on
-        }
-        access_level_assignments.append(assignment)
 
-    # Add logging to verify the endpoint and payload
+    # Prepare the list of access level Hrefs
+    access_level_hrefs = [al['Href'] for al in access_levels if al.get('Href')]
+
+    if not access_level_hrefs:
+        logger.error("No valid access level Hrefs found.")
+        raise ValueError("Access levels must include 'Href' fields.")
+
+    # If assigning multiple access levels, send as a list; otherwise, send as a single string
+    payload = access_level_hrefs if len(access_level_hrefs) > 1 else access_level_hrefs[0]
+
+    # Logging for debugging
     logger.debug(f"Assign Endpoint: {assign_endpoint}")
-    logger.debug(f"Access Level Assignments Payload: {json.dumps(access_level_assignments, indent=2)}")
+    logger.debug(f"Access Level Hrefs Payload: {json.dumps(payload, indent=2)}")
 
     try:
-        response = SESSION.post(assign_endpoint, headers=headers, json=access_level_assignments)
+        response = SESSION.put(assign_endpoint, headers=headers, json=payload)
         response.raise_for_status()
-        logger.info(f"Access levels assigned to user {person_key} successfully with dates.")
+        logger.info(f"Access levels assigned to user {person_key} successfully.")
     except requests.exceptions.HTTPError as http_err:
         logger.error(f"HTTP error during access level assignment: {http_err}")
         logger.error(f"Response Content: {response.text}")
@@ -529,6 +533,7 @@ def assign_access_levels_to_user_with_dates(base_address, access_token, instance
     except Exception as err:
         logger.error(f"Error assigning access levels to user {person_key}: {err}")
         raise
+
 
 def get_readers(base_address, access_token, instance_id):
     """
