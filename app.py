@@ -497,7 +497,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         raise
 def assign_access_levels_to_user(base_address, access_token, instance_id, person_key, access_levels):
     """
-    Assigns access levels to a person without setting active and expiration dates.
+    Assigns access levels to a person.
 
     Args:
         base_address (str): Base URL of the API.
@@ -510,7 +510,7 @@ def assign_access_levels_to_user(base_address, access_token, instance_id, person
 
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
+        "Content-Type": "text/plain"  # Set Content-Type to text/plain
     }
 
     # Prepare the list of access level Hrefs
@@ -520,17 +520,15 @@ def assign_access_levels_to_user(base_address, access_token, instance_id, person
         logger.error("No valid access level Hrefs found.")
         raise ValueError("Access levels must include 'Href' fields.")
 
-    # Prepare the payload as a JSON object with 'accesslevels' key
-    payload = {
-        "accesslevels": access_level_hrefs
-    }
+    # Since the API seems to expect a plain string, we'll join multiple Hrefs
+    payload = "\n".join(access_level_hrefs)
 
     # Logging for debugging
     logger.debug(f"Assign Endpoint: {assign_endpoint}")
-    logger.debug(f"Access Level Hrefs Payload: {json.dumps(payload, indent=2)}")
+    logger.debug(f"Access Level Hrefs Payload:\n{payload}")
 
     try:
-        response = SESSION.put(assign_endpoint, headers=headers, json=payload)
+        response = SESSION.put(assign_endpoint, headers=headers, data=payload)
         response.raise_for_status()
         logger.info(f"Access levels assigned to user {person_key} successfully.")
     except requests.exceptions.HTTPError as http_err:
@@ -540,6 +538,7 @@ def assign_access_levels_to_user(base_address, access_token, instance_id, person
     except Exception as err:
         logger.error(f"Error assigning access levels to user {person_key}: {err}")
         raise
+
 
 def get_readers(base_address, access_token, instance_id):
     """
@@ -765,11 +764,12 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
 
             # Step 7: Assign Access Levels to the User
             assign_access_levels_to_user(
-                base_address=BASE_ADDRESS,
-                access_token=access_token,
-                instance_id=instance_id,
-                person_key=user_id,
-                access_levels=access_levels
+        base_address=BASE_ADDRESS,
+        access_token=access_token,
+        instance_id=instance_id,
+        person_key=user_id,
+        access_levels=access_levels
+    )
             )
 
             # Optional: Wait for access levels to be processed
