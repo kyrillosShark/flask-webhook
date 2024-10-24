@@ -1,19 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>Unlock Successful</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            text-align: center;
-            margin-top: 100px;
-            color: #28a745;
-        }
-    </style>
+    <title>Unlock Door</title>
 </head>
 <body>
-    <h1>Success!</h1>
-    <p>Your door is now unlocking. Please wait...</p>
+    <h1>Unlock Door</h1>
+    <form action="/unlock" method="post">
+        <input type="hidden" name="token" value="{{ token }}">
+        <button type="submit">Unlock</button>
+    </form>
 </body>
 </html>
