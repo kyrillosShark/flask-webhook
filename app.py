@@ -896,6 +896,7 @@ def reset_database():
     except Exception as e:
         logger.exception(f"Error resetting database: {e}")
         return jsonify({'error': 'Failed to reset database'}), 500
+
 @app.route('/unlock_page', methods=['GET'])
 def unlock_page():
     token = request.args.get('token')
@@ -905,6 +906,7 @@ def unlock_page():
         return "Invalid unlock link.", 400
 
     return render_template('unlock_page.html', token=token)
+
 
 
 @app.route('/webhook', methods=['POST'])
