@@ -10,10 +10,11 @@ import datetime
 from datetime import timezone, timedelta
 import time
 import phonenumbers
-from flask import Flask, request, jsonify, abort
+from flask import Flask, request, jsonify, abort,render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
+
 
 from twilio.rest import Client
 import requests
@@ -283,6 +284,13 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
             return bt
 
     raise Exception(f"Badge Type '{badge_type_name}' not found after creation.")
+def create_unlock_link(token):
+    """
+    Creates an unlock link directing to the unlock page with the provided token.
+    """
+    unlock_link = f"{UNLOCK_LINK_BASE_URL}/unlock_page?token={token}"
+    return unlock_link
+
 
 
 def format_hid_26bit_h10301(facility_code, card_number):
@@ -889,6 +897,16 @@ def reset_database():
     except Exception as e:
         logger.exception(f"Error resetting database: {e}")
         return jsonify({'error': 'Failed to reset database'}), 500
+@app.route('/unlock_page', methods=['GET'])
+def unlock_page():
+    token = request.args.get('token')
+
+    if not token:
+        logger.warning("Unlock page accessed without token.")
+        return "Invalid unlock link.", 400
+
+    return render_template('unlock_page.html', token=token)
+
 
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
@@ -938,18 +956,20 @@ def handle_webhook():
 
 
 @app.route('/unlock', methods=['GET'])
+ @app.route('/unlock', methods=['POST'])
 def handle_unlock():
-    token = request.args.get('token')
+    data = request.get_json()
+    token = data.get('token')
 
     if not token:
-        logger.warning("Unlock attempt without token.")
-        return jsonify({'error': 'Token is missing'}), 400
+        logger.warning("Unlock attempt without token in POST request.")
+        return jsonify({'success': False, 'error': 'Token is missing.'}), 400
 
     is_valid, result = validate_unlock_token(token)
 
     if not is_valid:
         logger.warning(f"Invalid unlock token: {result}")
-        return jsonify({'error': result}), 400
+        return jsonify({'success': False, 'error': result}), 400
 
     unlock_token = result
 
@@ -967,7 +987,8 @@ def handle_unlock():
     # Simulate the card read in a separate thread to avoid blocking
     threading.Thread(target=simulate_unlock, args=(formatted_card_number, facility_code)).start()
 
-    return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
+    return jsonify({'success': True, 'message': 'Door is unlocking. Please wait...'}), 200
+
 
 def simulate_unlock(card_number, facility_code):
     """
