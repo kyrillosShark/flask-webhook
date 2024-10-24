@@ -940,7 +940,7 @@ def handle_unlock():
 
     return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
 
-def simulate_unlock(formatted_card_number, facility_code):
+def simulate_unlock(card_number, facility_code):
     """
     Simulates the card read to unlock the door using the formatted_card_number.
     """
