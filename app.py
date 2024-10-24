@@ -9,7 +9,7 @@ import threading
 import datetime
 from datetime import timezone, timedelta
 import time
-
+import phonenumbers
 from flask import Flask, request, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -101,6 +101,13 @@ def create_session():
     return session
 
 SESSION = create_session()
+def validate_phone_number(number):
+    try:
+        parsed_number = phonenumbers.parse(number, None)
+        return phonenumbers.is_possible_number(parsed_number) and phonenumbers.is_valid_number(parsed_number)
+    except NumberParseException:
+        return False
+
 
 # ----------------------------
 # Database Models
