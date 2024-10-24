@@ -957,7 +957,6 @@ def handle_webhook():
 
 
 @app.route('/unlock', methods=['GET'])
- @app.route('/unlock', methods=['POST'])
 def handle_unlock():
     data = request.get_json()
     token = data.get('token')
