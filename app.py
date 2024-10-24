@@ -876,46 +876,6 @@ def validate_unlock_token(token):
 # ----------------------------
 # Flask Routes
 # ----------------------------
-@app.route('/success', methods=['GET'])
-def unlock_success():
-    return render_template('success.html'), 200
-
-@app.route('/error', methods=['GET'])
-def unlock_error():
-    message = request.args.get('message', 'An error occurred.')
-    return render_template('error.html', message=message), 400
-@app.route('/perform_unlock', methods=['POST'])
-def perform_unlock():
-    data = request.get_json()
-    token = data.get('token')
-
-    if not token:
-        logger.warning("Unlock attempt without token.")
-        return jsonify({'success': False, 'message': 'Token is missing.'}), 400
-
-    is_valid, result = validate_unlock_token(token)
-
-    if not is_valid:
-        logger.warning(f"Invalid unlock token: {result}")
-        return jsonify({'success': False, 'message': result}), 400
-
-    unlock_token = result
-
-    with app.app_context():
-        unlock_token.used = True
-        db.session.commit()
-
-    # Retrieve both raw and formatted card numbers
-    card_number = unlock_token.user.card_number
-    facility_code = unlock_token.user.facility_code
-    formatted_card_number = unlock_token.user.formatted_card_number  # Retrieve the formatted card number
-
-    logger.info(f"Simulating unlock for card number: {formatted_card_number}, facility code: {facility_code}")
-
-    # Simulate the card read in a separate thread to avoid blocking
-    threading.Thread(target=simulate_unlock, args=(formatted_card_number, facility_code)).start()
-
-    return jsonify({'success': True}), 200
 
 @app.route('/reset_database', methods=['POST'])
 def reset_database():
@@ -983,19 +943,31 @@ def handle_unlock():
 
     if not token:
         logger.warning("Unlock attempt without token.")
-        return render_template('error.html', message='Token is missing'), 400
+        return jsonify({'error': 'Token is missing'}), 400
 
     is_valid, result = validate_unlock_token(token)
 
     if not is_valid:
         logger.warning(f"Invalid unlock token: {result}")
-        return render_template('error.html', message=result), 400
+        return jsonify({'error': result}), 400
 
     unlock_token = result
 
-    # Pass the token to the template
-    return render_template('unlock.html', token=token)
+    with app.app_context():
+        unlock_token.used = True
+        db.session.commit()
 
+    # Retrieve both raw and formatted card numbers
+    card_number = unlock_token.user.card_number
+    facility_code = unlock_token.user.facility_code
+    formatted_card_number = unlock_token.user.formatted_card_number  # Retrieve the formatted card number
+
+    logger.info(f"Simulating unlock for card number: {formatted_card_number}, facility code: {facility_code}")
+
+    # Simulate the card read in a separate thread to avoid blocking
+    threading.Thread(target=simulate_unlock, args=(formatted_card_number, facility_code)).start()
+
+    return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
 
 def simulate_unlock(card_number, facility_code):
     """
