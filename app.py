@@ -10,11 +10,10 @@ import datetime
 from datetime import timezone, timedelta
 import time
 import phonenumbers
-from flask import Flask, request, jsonify, abort
+from flask import Flask, request, jsonify, abort, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
-
 from twilio.rest import Client
 import requests
 from requests.adapters import HTTPAdapter
@@ -952,23 +951,8 @@ def handle_unlock():
             logger.warning(f"Invalid unlock token: {result}")
             return jsonify({'error': result}), 400
 
-        # Serve the HTML page with the 'Unlock' button
-        html_content = f'''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Unlock Door</title>
-        </head>
-        <body>
-            <h1>Unlock Door</h1>
-            <form action="/unlock" method="post">
-                <input type="hidden" name="token" value="{token}">
-                <button type="submit">Unlock</button>
-            </form>
-        </body>
-        </html>
-        '''
-        return html_content
+        # Render the 'unlock.html' template
+        return render_template('unlock.html', token=token)
 
     elif request.method == 'POST':
         token = request.form.get('token')
@@ -989,7 +973,7 @@ def handle_unlock():
             unlock_token.used = True
             db.session.commit()
 
-        # Retrieve both raw and formatted card numbers
+        # Retrieve raw card number and facility code
         card_number = unlock_token.user.card_number
         facility_code = unlock_token.user.facility_code
 
@@ -998,19 +982,9 @@ def handle_unlock():
         # Simulate the card read in a separate thread to avoid blocking
         threading.Thread(target=simulate_unlock, args=(card_number, facility_code)).start()
 
-        # Return a response, could be HTML or JSON
-        html_content = '''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Unlocking...</title>
-        </head>
-        <body>
-            <h1>Door is unlocking. Please wait...</h1>
-        </body>
-        </html>
-        '''
-        return html_content
+        # Render a response template or return a message
+        return render_template('unlocking.html')
+
 
 
 def simulate_unlock(card_number, facility_code):
