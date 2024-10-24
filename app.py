@@ -438,6 +438,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
         "EncodedCardNumber": int(card_number),
         "DisplayCardNumber": str(card_number),
         "FacilityCode": int(facility_code),
+        
         "ActiveOn": active_on,
         "ExpiresOn": expires_on,
         "CardFormat": {
@@ -669,6 +670,7 @@ def get_card_formats(base_address, access_token, instance_id):
             card_formats = []
 
         logger.info(f"Retrieved {len(card_formats)} card formats.")
+        logger.info(card_formats[0])
         return card_formats
     except Exception as err:
         logger.error(f"Error retrieving card formats: {err}")
