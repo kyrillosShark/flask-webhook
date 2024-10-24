@@ -954,8 +954,7 @@ def handle_webhook():
     return jsonify({'status': 'User creation in progress'}), 200
 
 
-@app.route('/unlock', methods=['POST'])
-@limiter.limit("10 per minute")  # Apply rate limiting to prevent abuse
+@app.route('/unlock', methods=['POST']) # Apply rate limiting to prevent abuse
 def handle_unlock():
     logger.info(f"Received request at /unlock with headers: {request.headers}")
     logger.info(f"Request Content-Type: {request.content_type}")
