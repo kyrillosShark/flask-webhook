@@ -937,37 +937,81 @@ def handle_webhook():
     return jsonify({'status': 'User creation in progress'}), 200
 
 
-@app.route('/unlock', methods=['GET'])
+@app.route('/unlock', methods=['GET', 'POST'])
 def handle_unlock():
-    token = request.args.get('token')
+    if request.method == 'GET':
+        token = request.args.get('token')
 
-    if not token:
-        logger.warning("Unlock attempt without token.")
-        return jsonify({'error': 'Token is missing'}), 400
+        if not token:
+            logger.warning("Unlock attempt without token.")
+            return jsonify({'error': 'Token is missing'}), 400
 
-    is_valid, result = validate_unlock_token(token)
+        is_valid, result = validate_unlock_token(token)
 
-    if not is_valid:
-        logger.warning(f"Invalid unlock token: {result}")
-        return jsonify({'error': result}), 400
+        if not is_valid:
+            logger.warning(f"Invalid unlock token: {result}")
+            return jsonify({'error': result}), 400
 
-    unlock_token = result
+        # Serve the HTML page with the 'Unlock' button
+        html_content = f'''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Unlock Door</title>
+        </head>
+        <body>
+            <h1>Unlock Door</h1>
+            <form action="/unlock" method="post">
+                <input type="hidden" name="token" value="{token}">
+                <button type="submit">Unlock</button>
+            </form>
+        </body>
+        </html>
+        '''
+        return html_content
 
-    with app.app_context():
-        unlock_token.used = True
-        db.session.commit()
+    elif request.method == 'POST':
+        token = request.form.get('token')
 
-    # Retrieve both raw and formatted card numbers
-    card_number = unlock_token.user.card_number
-    facility_code = unlock_token.user.facility_code
-    formatted_card_number = unlock_token.user.formatted_card_number  # Retrieve the formatted card number
+        if not token:
+            logger.warning("Unlock attempt without token.")
+            return jsonify({'error': 'Token is missing'}), 400
 
-    logger.info(f"Simulating unlock for card number: {formatted_card_number}, facility code: {facility_code}")
+        is_valid, result = validate_unlock_token(token)
 
-    # Simulate the card read in a separate thread to avoid blocking
-    threading.Thread(target=simulate_unlock, args=(formatted_card_number, facility_code)).start()
+        if not is_valid:
+            logger.warning(f"Invalid unlock token: {result}")
+            return jsonify({'error': result}), 400
 
-    return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
+        unlock_token = result
+
+        with app.app_context():
+            unlock_token.used = True
+            db.session.commit()
+
+        # Retrieve both raw and formatted card numbers
+        card_number = unlock_token.user.card_number
+        facility_code = unlock_token.user.facility_code
+
+        logger.info(f"Simulating unlock for card number: {card_number}, facility code: {facility_code}")
+
+        # Simulate the card read in a separate thread to avoid blocking
+        threading.Thread(target=simulate_unlock, args=(card_number, facility_code)).start()
+
+        # Return a response, could be HTML or JSON
+        html_content = '''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Unlocking...</title>
+        </head>
+        <body>
+            <h1>Door is unlocking. Please wait...</h1>
+        </body>
+        </html>
+        '''
+        return html_content
+
 
 def simulate_unlock(card_number, facility_code):
     """
