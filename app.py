@@ -10,11 +10,10 @@ import datetime
 from datetime import timezone, timedelta
 import time
 import phonenumbers
-from flask import Flask, request, jsonify, abort,render_template
+from flask import Flask, request, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
-
 
 from twilio.rest import Client
 import requests
@@ -284,12 +283,7 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
             return bt
 
     raise Exception(f"Badge Type '{badge_type_name}' not found after creation.")
-def create_unlock_link(token):
-    """
-    Creates an unlock link directing to the unlock page with the provided token.
-    """
-    unlock_link = f"{UNLOCK_LINK_BASE_URL}/unlock_page?token={token}"
-    return unlock_link
+
 
 def format_hid_26bit_h10301(facility_code, card_number):
     """
@@ -854,7 +848,6 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
     except Exception as e:
         logger.exception(f"Error in processing user creation: {e}")
 
-
 # ----------------------------
 # Unlock Token Management
 # ----------------------------
@@ -896,18 +889,6 @@ def reset_database():
     except Exception as e:
         logger.exception(f"Error resetting database: {e}")
         return jsonify({'error': 'Failed to reset database'}), 500
-
-@app.route('/unlock_page', methods=['GET'])
-def unlock_page():
-    token = request.args.get('token')
-
-    if not token:
-        logger.warning("Unlock page accessed without token.")
-        return "Invalid unlock link.", 400
-
-    return render_template('unlock_page.html', token=token)
-
-
 
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
@@ -956,30 +937,19 @@ def handle_webhook():
     return jsonify({'status': 'User creation in progress'}), 200
 
 
-@app.route('/unlock', methods=['POST']) # Apply rate limiting to prevent abuse
+@app.route('/unlock', methods=['GET'])
 def handle_unlock():
-    logger.info(f"Received request at /unlock with headers: {request.headers}")
-    logger.info(f"Request Content-Type: {request.content_type}")
-    logger.info(f"Request Data: {request.data}")
-
-    if not request.is_json:
-        logger.warning("Request Content-Type is not 'application/json'.")
-        return jsonify({'success': False, 'error': 'Unsupported Media Type'}), 415  # 415 Unsupported Media Type
-
-    data = request.get_json()
-    logger.info(f"Parsed JSON data: {data}")
-
-    token = data.get('token')
+    token = request.args.get('token')
 
     if not token:
-        logger.warning("Unlock attempt without token in POST request.")
-        return jsonify({'success': False, 'error': 'Token is missing.'}), 400  # 400 Bad Request
+        logger.warning("Unlock attempt without token.")
+        return jsonify({'error': 'Token is missing'}), 400
 
     is_valid, result = validate_unlock_token(token)
 
     if not is_valid:
         logger.warning(f"Invalid unlock token: {result}")
-        return jsonify({'success': False, 'error': result}), 400  # 400 Bad Request
+        return jsonify({'error': result}), 400
 
     unlock_token = result
 
@@ -997,9 +967,7 @@ def handle_unlock():
     # Simulate the card read in a separate thread to avoid blocking
     threading.Thread(target=simulate_unlock, args=(formatted_card_number, facility_code)).start()
 
-    return jsonify({'success': True, 'message': 'Door is unlocking. Please wait...'}), 200
-
-
+    return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
 
 def simulate_unlock(card_number, facility_code):
     """
