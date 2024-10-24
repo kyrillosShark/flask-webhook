@@ -143,26 +143,6 @@ class UnlockToken(db.Model):
 # ----------------------------
 # Helper Functions
 # ----------------------------
-import phonenumbers
-from phonenumbers.phonenumberutil import NumberParseException
-
-def validate_phone_number(number):
-    """
-    Validates a phone number using the phonenumbers library.
-
-    Args:
-        number (str): The phone number to validate.
-
-    Returns:
-        bool: True if the phone number is valid, False otherwise.
-    """
-    try:
-        # Parse the phone number without assuming a default region
-        parsed_number = phonenumbers.parse(number, None)
-        # Check if the number is a possible and valid number
-        return phonenumbers.is_possible_number(parsed_number) and phonenumbers.is_valid_number(parsed_number)
-    except NumberParseException:
-        return False
 
 def get_access_token(base_address, instance_name, username, password):
     """
