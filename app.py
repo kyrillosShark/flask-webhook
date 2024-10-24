@@ -1115,7 +1115,7 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         return False
 
 
-def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, formatted_card_number):
+def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number):
     """
     Simulates a card read by publishing a simulateCardRead event using the formatted_card_number.
 
