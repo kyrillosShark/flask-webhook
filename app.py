@@ -1206,6 +1206,51 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     except Exception as err:
         logger.error(f"Error during event publishing: {err}")
         return False
+@app.route('/get_unlock_url', methods=['GET'])
+def get_unlock_url():
+    """
+    Generates and returns an unlock URL for a specific user.
+
+    Query Parameters:
+        user_id (int): The ID of the user for whom to generate the unlock URL.
+
+    Returns:
+        JSON response containing the unlock URL or an error message.
+    """
+    user_id = request.args.get('user_id')
+
+    if not user_id:
+        logger.warning("get_unlock_url called without user_id.")
+        return jsonify({'error': 'user_id parameter is required.'}), 400
+
+    try:
+        user_id = int(user_id)
+    except ValueError:
+        logger.warning(f"Invalid user_id provided: {user_id}")
+        return jsonify({'error': 'user_id must be an integer.'}), 400
+
+    with app.app_context():
+        user = User.query.get(user_id)
+        if not user:
+            logger.warning(f"User with ID {user_id} not found.")
+            return jsonify({'error': 'User not found.'}), 404
+
+        if not user.is_membership_active():
+            logger.info(f"User {user_id} membership is not active.")
+            return jsonify({'error': 'User membership is not active.'}), 403
+
+        # Generate a new unlock token
+        unlock_token_str = generate_unlock_token(user.id)
+        if not unlock_token_str:
+            logger.error(f"Failed to generate unlock token for user {user_id}.")
+            return jsonify({'error': 'Failed to generate unlock token.'}), 500
+
+        # Create the unlock link
+        unlock_link = create_unlock_link(unlock_token_str)
+
+        logger.info(f"Generated unlock link for user {user_id}: {unlock_link}")
+
+        return jsonify({'unlock_url': unlock_link}), 200
 
 # ----------------------------
 # Main Execution
