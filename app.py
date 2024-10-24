@@ -856,6 +856,7 @@ def process_user_creation(first_name, last_name, email, phone_number, membership
     except Exception as e:
         logger.exception(f"Error in processing user creation: {e}")
 
+
 # ----------------------------
 # Unlock Token Management
 # ----------------------------
