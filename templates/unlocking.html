@@ -2,24 +2,58 @@
 
 {% block content %}
 <style>
+    /* Embedded CSS for Unlocking Page */
     .unlocking-container {
+        max-width: 500px;
+        margin: 0 auto;
         text-align: center;
-        margin-top: 50px;
     }
-    h1 {
-        color: #000;
+    h1, p {
+        color: #000000; /* Black */
+        font-family: 'Roboto', sans-serif;
     }
-    p {
-        color: #333;
+    .spinner-border {
+        width: 4rem;
+        height: 4rem;
+        color: #ff0000; /* Iron House Red */
     }
     .btn-home {
-        margin-top: 30px;
+        background-color: #333333; /* Dark Gray */
+        border-color: #333333;
+        color: #ffffff;
+        font-size: 1em;
+        padding: 0.5em 1em;
+        transition: background-color 0.3s, border-color 0.3s;
+        border-radius: 50px;
+    }
+    .btn-home:hover {
+        background-color: #555555;
+        border-color: #555555;
+        color: #ffffff;
+    }
+    .card {
+        border: none;
+        border-radius: 15px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .card-body {
+        padding: 2rem;
     }
 </style>
 
 <div class="unlocking-container">
-    <h1>Unlocking...</h1>
-    <p>The door is unlocking. Please wait a moment.</p>
-    <a href="#" class="btn btn-secondary btn-home">Return to Home</a>
+    <div class="card my-5">
+        <div class="card-body">
+            <h1 class="card-title mb-4">Unlocking...</h1>
+            <p class="card-text mb-4">Please wait while we unlock the door for you.</p>
+            <!-- Spinner for visual feedback -->
+            <div class="d-flex justify-content-center mb-4">
+                <div class="spinner-border" role="status">
+                    <span class="visually-hidden">Unlocking...</span>
+                </div>
+            </div>
+            <a href="/" class="btn btn-home btn-lg w-100">Return to Home</a>
+        </div>
+    </div>
 </div>
 {% endblock %}
