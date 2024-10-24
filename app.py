@@ -942,7 +942,7 @@ def handle_unlock():
 
 def simulate_unlock(card_number, facility_code):
     """
-    Simulates the card read to unlock the door using the formatted_card_number.
+    Simulates the card read to unlock the door using the 16-bit card_number.
     """
     try:
         with app.app_context():
@@ -1010,7 +1010,7 @@ def simulate_unlock(card_number, facility_code):
                 controller=controller,
                 reason=SIMULATION_REASON,
                 facility_code=facility_code,
-                formatted_card_number=card_number  # Correct argument
+                card_number=card_number  # Use raw 16-bit card_number
             )
 
             if success:
