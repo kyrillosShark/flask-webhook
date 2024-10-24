@@ -1,17 +1,64 @@
+<!-- templates/unlock_page.html -->
 <!DOCTYPE html>
 <html>
 <head>
     <title>Unlock Door</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin-top: 100px;
+            background-color: #f0f0f0;
+        }
+        .unlock-button {
+            padding: 15px 30px;
+            font-size: 18px;
+            color: #fff;
+            background-color: #28a745;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        .unlock-button:hover {
+            background-color: #218838;
+        }
+        .message {
+            margin-top: 20px;
+            font-size: 16px;
+            color: #555;
+        }
+    </style>
 </head>
 <body>
-    <h1>Unlock Door</h1>
-    {% if message %}
-        <p>{{ message }}</p>
-    {% else %}
-        <form method="post">
-            <input type="hidden" name="token" value="{{ token }}">
-            <button type="submit">Unlock</button>
-        </form>
-    {% endif %}
+    <h1>Unlock the Door</h1>
+    <button class="unlock-button" onclick="unlockDoor()">Unlock</button>
+    <div class="message" id="message"></div>
+
+    <script>
+        function unlockDoor() {
+            fetch('/unlock', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ token: '{{ token }}' })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('message').innerText = 'Door is unlocking. Please wait...';
+                    // Optionally disable the button to prevent multiple clicks
+                    document.querySelector('.unlock-button').disabled = true;
+                } else {
+                    document.getElementById('message').innerText = 'Error: ' + data.error;
+                }
+            })
+            .catch((error) => {
+                console.error('Error:', error);
+                document.getElementById('message').innerText = 'An unexpected error occurred.';
+            });
+        }
+    </script>
 </body>
 </html>
