@@ -1,14 +1,13 @@
-<!-- templates/unlock_page.html -->
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Unlock Door</title>
+    <meta charset="UTF-8">
+    <title>Unlock Your Door</title>
     <style>
         body {
             font-family: Arial, sans-serif;
             text-align: center;
             margin-top: 100px;
-            background-color: #f0f0f0;
         }
         .unlock-button {
             padding: 15px 30px;
@@ -18,47 +17,63 @@
             border: none;
             border-radius: 5px;
             cursor: pointer;
-            transition: background-color 0.3s ease;
         }
-        .unlock-button:hover {
-            background-color: #218838;
+        .unlock-button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
         }
         .message {
             margin-top: 20px;
             font-size: 16px;
-            color: #555;
+            color: #dc3545;
         }
     </style>
 </head>
 <body>
-    <h1>Unlock the Door</h1>
-    <button class="unlock-button" onclick="unlockDoor()">Unlock</button>
-    <div class="message" id="message"></div>
+    <h1>Unlock Your Door</h1>
+    <button id="unlockButton" class="unlock-button">Unlock Door</button>
+    <div id="message" class="message"></div>
 
     <script>
-        function unlockDoor() {
-            fetch('/unlock', {
+        document.getElementById('unlockButton').addEventListener('click', function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const token = urlParams.get('token');
+
+            if (!token) {
+                document.getElementById('message').textContent = 'Invalid or missing token.';
+                return;
+            }
+
+            // Disable the button to prevent multiple clicks
+            const button = this;
+            button.disabled = true;
+            button.textContent = 'Processing...';
+
+            // Send a POST request to perform the unlock
+            fetch('/perform_unlock', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ token: '{{ token }}' })
+                body: JSON.stringify({ token: token })
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    document.getElementById('message').innerText = 'Door is unlocking. Please wait...';
-                    // Optionally disable the button to prevent multiple clicks
-                    document.querySelector('.unlock-button').disabled = true;
+                    window.location.href = '/success';
                 } else {
-                    document.getElementById('message').innerText = 'Error: ' + data.error;
+                    document.getElementById('message').textContent = data.message || 'An error occurred.';
+                    button.disabled = false;
+                    button.textContent = 'Unlock Door';
                 }
             })
-            .catch((error) => {
+            .catch(error => {
                 console.error('Error:', error);
-                document.getElementById('message').innerText = 'An unexpected error occurred.';
+                document.getElementById('message').textContent = 'An unexpected error occurred.';
+                button.disabled = false;
+                button.textContent = 'Unlock Door';
             });
-        }
+        });
     </script>
 </body>
 </html>
