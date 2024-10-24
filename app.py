@@ -885,30 +885,50 @@ def reset_database():
 
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
-    data = request.json
+    # Log raw request data
+    raw_data = request.data
+    logger.debug(f"Raw request data: {raw_data}")
+
+    # Attempt to parse JSON data
+    data = request.get_json()
+    
+    # If JSON data is not present, fall back to form data
+    if not data:
+        data = request.form.to_dict()
+        logger.debug("Parsed form data instead of JSON.")
+
     logger.info(f"Received webhook data: {data}")
 
-    # Extract fields from the data
-    first_name = data.get('first_name')
-    last_name = data.get('last_name')
+    # Extract fields with flexibility in field names
+    first_name = data.get('first_name') or data.get('firstname')
+    last_name = data.get('last_name') or data.get('lastname')
     email = data.get('email')
-    phone_number = data.get('phone')
+    phone_number = data.get('phone') or data.get('phone_number')
 
-    # Check for required fields
+    # Log extracted fields
+    logger.debug(f"Extracted first_name: {first_name}")
+    logger.debug(f"Extracted last_name: {last_name}")
+    logger.debug(f"Extracted email: {email}")
+    logger.debug(f"Extracted phone_number: {phone_number}")
+
+    # Validate required fields
     if not all([first_name, last_name, email, phone_number]):
-        logger.warning("Missing required fields.")
+        logger.warning(f"Missing required fields. Received data: {data}")
         return jsonify({'error': 'Missing required fields.'}), 400
+
+    # Validate phone number format
+    if not validate_phone_number(phone_number):
+        logger.warning(f"Invalid phone number format: {phone_number}")
+        return jsonify({'error': 'Invalid phone number format.'}), 400
 
     logger.info(f"Processing user: {first_name} {last_name}, Email: {email}, Phone: {phone_number}")
 
-    # Process user creation in a separate thread to avoid blocking
+    # Process user creation in a separate thread with application context
     threading.Thread(target=process_user_creation, args=(
         first_name, last_name, email, phone_number)).start()
 
     return jsonify({'status': 'User creation in progress'}), 200
 
-
-@app.route('/unlock', methods=['GET'])
 
 @app.route('/unlock', methods=['GET'])
 def handle_unlock():
