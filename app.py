@@ -10,8 +10,7 @@ import datetime
 from datetime import timezone, timedelta
 import time
 import phonenumbers
-from phonenumbers import NumberParseException
-from flask import Flask, request, jsonify, abort, render_template_string
+from flask import Flask, request, jsonify, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
@@ -102,13 +101,13 @@ def create_session():
     return session
 
 SESSION = create_session()
-
 def validate_phone_number(number):
     try:
         parsed_number = phonenumbers.parse(number, None)
         return phonenumbers.is_possible_number(parsed_number) and phonenumbers.is_valid_number(parsed_number)
     except NumberParseException:
         return False
+
 
 # ----------------------------
 # Database Models
@@ -129,6 +128,10 @@ class User(db.Model):
     def is_membership_active(self):
         now = datetime.datetime.utcnow()
         return self.membership_start <= now <= self.membership_end
+
+
+
+
 
 class UnlockToken(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -281,6 +284,7 @@ def get_badge_type_details(base_address, access_token, instance_id, badge_type_n
 
     raise Exception(f"Badge Type '{badge_type_name}' not found after creation.")
 
+
 def format_hid_26bit_h10301(facility_code, card_number):
     """
     Formats card credentials according to HID 26-bit H10301 format specifications.
@@ -323,6 +327,7 @@ def format_hid_26bit_h10301(facility_code, card_number):
     
     return formatted_number, None
 
+
 def generate_card_number() -> int:
     """
     Generates a random card number using facility code from environment variable.
@@ -346,6 +351,8 @@ def generate_card_number() -> int:
     card_number = random.randint(0, 65535)
     logger.debug(f"Generated card_number: {card_number}")
     return card_number
+
+
 
 def get_access_levels(base_address, access_token, instance_id):
     access_levels_endpoint = f"{base_address}/api/f/{instance_id}/accesslevels"
@@ -538,7 +545,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
             email=email,
             phone_number=phone_number,
             card_number=card_number,                      # Raw 16-bit Card Number
-            formatted_card_number=formatted_card_number,  # 26-bit Formatted Card Number
+            formatted_card_number=card_number,  # 26-bit Formatted Card Number
             facility_code=facility_code,
             membership_start=membership_start,
             membership_end=membership_end
@@ -556,6 +563,7 @@ def create_user(base_address, access_token, instance_id, first_name, last_name, 
     except Exception as err:
         logger.error(f"Error during user creation: {err}")
         raise
+
 
 def assign_access_levels_to_user(base_address, access_token, instance_id, person_key, access_levels):
     """
@@ -738,7 +746,7 @@ def create_unlock_link(token):
     """
     Creates an unlock link using the provided token.
     """
-    unlock_link = f"{UNLOCK_LINK_BASE_URL}/unlock?token={token}"
+    unlock_link = f"{UNLOCK_LINK_BASE_URL}?token={token}"
     return unlock_link
 
 def send_sms(phone_number, unlock_link):
@@ -869,35 +877,6 @@ def validate_unlock_token(token):
 # Flask Routes
 # ----------------------------
 
-# Define the HTML template for the unlock page
-unlock_page = '''
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Unlock Door</title>
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
-        button { padding: 15px 30px; font-size: 18px; }
-        .message { margin-top: 20px; font-size: 16px; color: green; }
-        .error { margin-top: 20px; font-size: 16px; color: red; }
-    </style>
-</head>
-<body>
-    <h1>Unlock Door</h1>
-    <form method="POST">
-        <input type="hidden" name="token" value="{{ token }}">
-        <button type="submit">Unlock Door</button>
-    </form>
-    {% if message %}
-    <div class="message">{{ message }}</div>
-    {% endif %}
-    {% if error %}
-    <div class="error">{{ error }}</div>
-    {% endif %}
-</body>
-</html>
-'''
-
 @app.route('/reset_database', methods=['POST'])
 def reset_database():
     if not app.config['DEBUG']:
@@ -957,46 +936,40 @@ def handle_webhook():
 
     return jsonify({'status': 'User creation in progress'}), 200
 
-@app.route('/unlock', methods=['GET', 'POST'])
+
+@app.route('/unlock', methods=['GET'])
 def handle_unlock():
-    if request.method == 'GET':
-        token = request.args.get('token')
-        if not token:
-            logger.warning("Unlock attempt without token.")
-            return "Error: Token is missing.", 400
-        return render_template_string(unlock_page, token=token, message=None, error=None)
-    
-    elif request.method == 'POST':
-        token = request.form.get('token')
-        if not token:
-            logger.warning("Unlock attempt without token.")
-            return render_template_string(unlock_page, token=token, message=None, error="Error: Token is missing."), 400
+    token = request.args.get('token')
 
-        is_valid, result = validate_unlock_token(token)
+    if not token:
+        logger.warning("Unlock attempt without token.")
+        return jsonify({'error': 'Token is missing'}), 400
 
-        if not is_valid:
-            logger.warning(f"Invalid unlock token: {result}")
-            return render_template_string(unlock_page, token=token, message=None, error=f"Error: {result}"), 400
+    is_valid, result = validate_unlock_token(token)
 
-        unlock_token = result
+    if not is_valid:
+        logger.warning(f"Invalid unlock token: {result}")
+        return jsonify({'error': result}), 400
 
-        with app.app_context():
-            unlock_token.used = True
-            db.session.commit()
+    unlock_token = result
 
-        # Retrieve both raw and formatted card numbers
-        card_number = unlock_token.user.card_number
-        facility_code = unlock_token.user.facility_code
-        formatted_card_number = unlock_token.user.formatted_card_number  # Retrieve the formatted card number
+    with app.app_context():
+        unlock_token.used = True
+        db.session.commit()
 
-        logger.info(f"Simulating unlock for card number: {formatted_card_number}, facility code: {facility_code}")
+    # Retrieve both raw and formatted card numbers
+    card_number = unlock_token.user.card_number
+    facility_code = unlock_token.user.facility_code
+    formatted_card_number = unlock_token.user.formatted_card_number  # Retrieve the formatted card number
 
-        # Simulate the card read in a separate thread to avoid blocking
-        threading.Thread(target=simulate_unlock, args=(formatted_card_number, facility_code)).start()
+    logger.info(f"Simulating unlock for card number: {formatted_card_number}, facility code: {facility_code}")
 
-        return render_template_string(unlock_page, token=token, message="Door is unlocking. Please wait...", error=None), 200
+    # Simulate the card read in a separate thread to avoid blocking
+    threading.Thread(target=simulate_unlock, args=(formatted_card_number, facility_code)).start()
 
-def simulate_unlock(formatted_card_number, facility_code):
+    return jsonify({'message': 'Door is unlocking. Please wait...'}), 200
+
+def simulate_unlock(card_number, facility_code):
     """
     Simulates the card read to unlock the door using the 16-bit card_number.
     """
@@ -1066,7 +1039,7 @@ def simulate_unlock(formatted_card_number, facility_code):
                 controller=controller,
                 reason=SIMULATION_REASON,
                 facility_code=facility_code,
-                card_number=formatted_card_number  # Use formatted 26-bit card_number
+                card_number=card_number  # Use raw 16-bit card_number
             )
 
             if success:
@@ -1077,7 +1050,10 @@ def simulate_unlock(formatted_card_number, facility_code):
     except Exception as e:
         logger.exception(f"Error in simulating unlock: {e}")
 
-def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number):
+
+
+
+def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, formatted_card_number):
     """
     Simulates a card read by publishing a simulateCardRead event using the formatted_card_number.
 
@@ -1086,12 +1062,12 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
     """
     event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
 
-    # Ensure card_number and facility_code are integers
+    # Ensure formatted_card_number and facility_code are integers
     try:
         card_number_int = int(card_number)
         facility_code_int = int(facility_code)
     except ValueError as e:
-        logger.error(f"Invalid card number or facility code: {e}")
+        logger.error(f"Invalid formatted card number or facility code: {e}")
         return False
 
     # Construct EventData
@@ -1167,6 +1143,96 @@ def simulate_card_read(base_address, access_token, instance_id, reader, card_for
         logger.error(f"Error during event publishing: {err}")
         return False
 
+
+def simulate_card_read(base_address, access_token, instance_id, reader, card_format, controller, reason, facility_code, card_number):
+    """
+    Simulates a card read by publishing a simulateCardRead event using the formatted_card_number.
+
+    Returns:
+        bool: True if successful, False otherwise.
+    """
+    event_endpoint = f"{base_address}/api/f/{instance_id}/eventmessagesink"
+
+    # Ensure formatted_card_number and facility_code are integers
+    try:
+        card_number_int = int(card_number)
+        facility_code_int = int(facility_code)
+    except ValueError as e:
+        logger.error(f"Invalid formatted card number or facility code: {e}")
+        return False
+
+    # Construct EventData
+    event_data = {
+        "Reason": reason,
+        "FacilityCode": facility_code_int,
+        "EncodedCardNumber": card_number_int,
+    }
+
+    logger.info(f"Event Data before encoding: {event_data}")
+
+    # Convert EventData to BSON and then to Base64
+    event_data_bson = BSON.encode(event_data)
+    event_data_base64 = base64.b64encode(event_data_bson).decode('utf-8')
+
+    logger.info(f"EventDataBsonBase64: {event_data_base64}")
+
+    # Construct the payload
+    payload = {
+        "$type": "Feenics.Keep.WebApi.Model.EventMessagePosting, Feenics.Keep.WebApi.Model",
+        "OccurredOn": datetime.datetime.utcnow().replace(microsecond=0).isoformat() + 'Z',
+        "AppKey": "MercuryCommands",
+        "EventTypeMoniker": {
+            "$type": "Feenics.Keep.WebApi.Model.MonikerItem, Feenics.Keep.WebApi.Model",
+            "Namespace": "MercuryServiceCommands",
+            "Nickname": "mercury:command-simulateCardRead"
+        },
+        "RelatedObjects": [
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": reader['Href'],
+                "LinkedObjectKey": reader['Key'],
+                "CommonName": reader['CommonName'],
+                "Relation": "Reader",
+                "MetaDataBson": None
+            },
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": card_format['Href'],
+                "LinkedObjectKey": card_format['Key'],
+                "CommonName": card_format['CommonName'],
+                "Relation": "CardFormat",
+                "MetaDataBson": None
+            },
+            {
+                "$type": "Feenics.Keep.WebApi.Model.ObjectLinkItem, Feenics.Keep.WebApi.Model",
+                "Href": controller['Href'],
+                "LinkedObjectKey": controller['Key'],
+                "CommonName": controller['CommonName'],
+                "Relation": "Controller",
+                "MetaDataBson": None
+            }
+        ],
+        "EventDataBsonBase64": event_data_base64
+    }
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        response = SESSION.post(event_endpoint, headers=headers, json=payload)
+        response.raise_for_status()
+        logger.info("Card read simulation event published successfully.")
+        return True
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error during event publishing: {http_err}")
+        logger.error(f"Response Status Code: {response.status_code}")
+        logger.error(f"Response Content: {response.text}")
+        return False
+    except Exception as err:
+        logger.error(f"Error during event publishing: {err}")
+        return False
 @app.route('/get_unlock_url', methods=['GET'])
 def get_unlock_url():
     """
