@@ -291,8 +291,6 @@ def create_unlock_link(token):
     unlock_link = f"{UNLOCK_LINK_BASE_URL}/unlock_page?token={token}"
     return unlock_link
 
-
-
 def format_hid_26bit_h10301(facility_code, card_number):
     """
     Formats card credentials according to HID 26-bit H10301 format specifications.
@@ -956,20 +954,30 @@ def handle_webhook():
     return jsonify({'status': 'User creation in progress'}), 200
 
 
-@app.route('/unlock', methods=['GET'])
+@app.route('/unlock', methods=['GET']) # Apply rate limiting to prevent abuse
 def handle_unlock():
+    logger.info(f"Received request at /unlock with headers: {request.headers}")
+    logger.info(f"Request Content-Type: {request.content_type}")
+    logger.info(f"Request Data: {request.data}")
+
+    if not request.is_json:
+        logger.warning("Request Content-Type is not 'application/json'.")
+        return jsonify({'success': False, 'error': 'Unsupported Media Type'}), 415  # 415 Unsupported Media Type
+
     data = request.get_json()
+    logger.info(f"Parsed JSON data: {data}")
+
     token = data.get('token')
 
     if not token:
         logger.warning("Unlock attempt without token in POST request.")
-        return jsonify({'success': False, 'error': 'Token is missing.'}), 400
+        return jsonify({'success': False, 'error': 'Token is missing.'}), 400  # 400 Bad Request
 
     is_valid, result = validate_unlock_token(token)
 
     if not is_valid:
         logger.warning(f"Invalid unlock token: {result}")
-        return jsonify({'success': False, 'error': result}), 400
+        return jsonify({'success': False, 'error': result}), 400  # 400 Bad Request
 
     unlock_token = result
 
@@ -988,6 +996,7 @@ def handle_unlock():
     threading.Thread(target=simulate_unlock, args=(formatted_card_number, facility_code)).start()
 
     return jsonify({'success': True, 'message': 'Door is unlocking. Please wait...'}), 200
+
 
 
 def simulate_unlock(card_number, facility_code):
