@@ -9,4 +9,5 @@ python-dotenv
 pymongo
 psycopg2
 flask-limiter
+phonenumbers
 
