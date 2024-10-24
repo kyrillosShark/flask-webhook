@@ -1,9 +1,25 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Unlocking...</title>
-</head>
-<body>
-    <h1>Door is unlocking. Please wait...</h1>
-</body>
-</html>
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    .unlocking-container {
+        text-align: center;
+        margin-top: 50px;
+    }
+    h1 {
+        color: #000;
+    }
+    p {
+        color: #333;
+    }
+    .btn-home {
+        margin-top: 30px;
+    }
+</style>
+
+<div class="unlocking-container">
+    <h1>Unlocking...</h1>
+    <p>The door is unlocking. Please wait a moment.</p>
+    <a href="#" class="btn btn-secondary btn-home">Return to Home</a>
+</div>
+{% endblock %}
