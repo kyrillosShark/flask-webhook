@@ -718,12 +718,14 @@ def get_controllers(base_address, access_token, instance_id):
         logger.error(f"Error retrieving controllers: {err}")
         raise
 
+TOKEN_VALIDITY_HOURS = int(os.getenv("TOKEN_VALIDITY_HOURS", 24))  # Default to 24 hours if not set
+
 def generate_unlock_token(user_id):
     """
     Generates a unique unlock token for the user and saves it to the database.
     """
     token_str = str(uuid.uuid4())
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=15)  # Token valid for 15 minutes
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(hours=TOKEN_VALIDITY_HOURS)
 
     with app.app_context():
         user = User.query.get(user_id)
